@@ -1,8 +1,9 @@
 """
 Script de Migração dos Dados Locais (hospital.db) para o Neon PostgreSQL
 Uso:
+  python migrar_para_neon.py
+  ou:
   python migrar_para_neon.py "sua-url-do-neon"
-  ou defina a variável de ambiente DATABASE_URL
 """
 import sys
 import os
@@ -10,16 +11,28 @@ import sqlite3
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+# Carregar .env se existir
+if os.path.exists(".env"):
+    try:
+        with open(".env", "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    os.environ.setdefault(k.strip(), v.strip())
+    except Exception:
+        pass
+
 # Importar modelos do app
 import main
 from main import Base, Manutencao, Rouparia, ConfiguracaoItem, Parametro, Usuario
 
+DEFAULT_NEON_URL = "postgresql://neondb_owner:npg_eZ5OqvB9WapK@ep-shy-term-be2zq57k-pooler.c-9.us-east-2.aws.neon.tech/neondb?sslmode=require"
+
 def migrar(neon_url=None):
-    url_destino = neon_url or os.getenv("DATABASE_URL")
+    url_destino = neon_url or os.getenv("DATABASE_URL") or DEFAULT_NEON_URL
     if not url_destino or "sqlite" in url_destino:
-        print("❌ Por favor, informe a URL de conexão do Neon PostgreSQL.")
-        print('Exemplo: python migrar_para_neon.py "postgresql://user:senha@ep-xyz.us-east-2.aws.neon.tech/neondb?sslmode=require"')
-        return
+        url_destino = DEFAULT_NEON_URL
 
     if url_destino.startswith("postgres://"):
         url_destino = url_destino.replace("postgres://", "postgresql://", 1)
@@ -38,6 +51,10 @@ def migrar(neon_url=None):
         print("✅ Conectado ao Neon com sucesso! Tabelas criadas/verificadas.")
     except Exception as e:
         print(f"❌ Erro ao conectar ao Neon: {e}")
+        print("\nDica no Windows CMD: se passar a URL pela linha de comando, use aspas duplas:")
+        print('  python migrar_para_neon.py "sua-url-aqui"')
+        print("Ou simplesmente execute sem parâmetros:")
+        print("  python migrar_para_neon.py")
         return
 
     print("\n📦 Iniciando transferência dos dados...")

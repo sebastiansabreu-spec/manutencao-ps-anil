@@ -21,6 +21,17 @@ except ImportError:
 # ==============================================================================
 # 1. BANCO DE DADOS (Neon PostgreSQL em produção ou SQLite local)
 # ==============================================================================
+if os.path.exists(".env"):
+    try:
+        with open(".env", "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    os.environ.setdefault(k.strip(), v.strip())
+    except Exception:
+        pass
+
 SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./hospital.db")
 if SQLALCHEMY_DATABASE_URL.startswith("postgres://"):
     SQLALCHEMY_DATABASE_URL = SQLALCHEMY_DATABASE_URL.replace("postgres://", "postgresql://", 1)
@@ -1023,8 +1034,13 @@ async def importar_planilha_excel(arquivo: UploadFile = File(...), db: Session =
                 elif raw_conc:
                     data_conc = str(raw_conc).strip()
                     
-                ret_val = str(ws.cell(row=row, column=17).value or "").strip().lower()
-                ret_int = 1 if ret_val in ["sim", "1", "true", "s"] else 0
+                obs_val = str(ws.cell(row=row, column=17).value or "").strip()
+                if obs_val.lower() == "none":
+                    obs_val = ""
+
+                ret_raw = ws.cell(row=row, column=18).value
+                ret_val = str(ret_raw or "").strip().lower()
+                ret_int = 1 if (ret_raw is True or ret_val in ["sim", "1", "true", "s", "x"]) else 0
                 
                 existente = db.query(Manutencao).filter(Manutencao.codigo_id == codigo_str).first()
                 if existente:
@@ -1043,6 +1059,7 @@ async def importar_planilha_excel(arquivo: UploadFile = File(...), db: Session =
                     existente.responsavel_recebimento = resp_rec or existente.responsavel_recebimento
                     existente.status = status_s or existente.status
                     existente.data_conclusao = data_conc or existente.data_conclusao
+                    existente.observacoes = obs_val or existente.observacoes
                     existente.retrabalho = ret_int
                 else:
                     novo_m = Manutencao(
@@ -1062,6 +1079,7 @@ async def importar_planilha_excel(arquivo: UploadFile = File(...), db: Session =
                         responsavel_recebimento=resp_rec,
                         status=status_s,
                         data_conclusao=data_conc,
+                        observacoes=obs_val,
                         retrabalho=ret_int
                     )
                     db.add(novo_m)
