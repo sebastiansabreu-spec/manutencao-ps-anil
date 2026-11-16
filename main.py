@@ -36,10 +36,17 @@ SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./hospital.db")
 if SQLALCHEMY_DATABASE_URL.startswith("postgres://"):
     SQLALCHEMY_DATABASE_URL = SQLALCHEMY_DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-if "sqlite" in SQLALCHEMY_DATABASE_URL:
+try:
+    if "sqlite" in SQLALCHEMY_DATABASE_URL:
+        engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
+    else:
+        engine = create_engine(SQLALCHEMY_DATABASE_URL, pool_pre_ping=True, pool_recycle=300)
+    with engine.connect() as conn:
+        pass
+except Exception as e:
+    print(f"⚠️ Atenção: Falha ao conectar ao banco remoto. Usando SQLite local (hospital.db). Detalhe: {e}")
+    SQLALCHEMY_DATABASE_URL = "sqlite:///./hospital.db"
     engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
-else:
-    engine = create_engine(SQLALCHEMY_DATABASE_URL, pool_pre_ping=True, pool_recycle=300)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
