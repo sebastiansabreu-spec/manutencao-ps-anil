@@ -15,6 +15,17 @@ O servidor será inicializado e abrirá automaticamente no navegador em:
 
 ---
 
+## 🔐 Acesso e Credenciais do Sistema
+
+O sistema possui controle de acesso com tela de autenticação segura:
+
+| Usuário | Senha | Perfil | Permissões |
+| :--- | :--- | :--- | :--- |
+| **`admin`** | **`anil2026`** | Administrador | Acesso total, configurações, exclusão e edição |
+| **`plantao`** | **`psanil`** | Operador Plantonista | Lançamentos, edição de chamados e consultas |
+
+---
+
 ## 📑 Módulos e Áreas do Sistema
 
 ### 1. ✍️ Painel Central de Lançamentos
@@ -49,9 +60,11 @@ Filtro por competência mensal (`Mês/Ano` ou `Todos`) com as fórmulas exatas v
 - **Ranking por Setor / Local**: Identificação dos setores com maior volume de chamados.
 - **Matriz Cruzada (Setor × Item / Equipamento)**: Grade bidimensional exata com a contagem cruzada de ocorrências e insumos.
 
-### 4. 🗄️ Base de Dados (Tabelas)
-- Visualização e busca rápida nas bases `BD_Manutencao` e `BD_Rouparia`.
-- Histórico com IDs oficiais (ex: `PRED-0001`, `CLIM-0003`, `R-9`, etc.).
+### 4. 🗄️ Base de Dados (Tabelas e Edição Direta)
+- Visualização e busca rápida em tempo real nas bases `BD_Manutenção` e `BD_Rouparia`.
+- **Botão de Edição Direta no BD (Ícone de Lápis ✏️)**: Permite abrir qualquer chamado ou registro de rouparia em janela modal, modificar qualquer campo (data, setor, status, responsável, quantidade, valores) e salvar imediatamente no banco de dados.
+- **Botão de Exclusão (Ícone de Lixeira 🗑️)**: Exclusão com confirmação de segurança.
+- Histórico com IDs oficiais preservados (ex: `PRED-0001`, `CLIM-0003`, `R-9`, etc.).
 
 ### 5. ⚙️ Configurações & Cadastros Base
 - Inclusão e exclusão de novos **Itens & Insumos de Manutenção**.
