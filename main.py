@@ -96,6 +96,22 @@ class Parametro(Base):
     valor = Column(String)
     descricao = Column(String, default="")
 
+# Tabela de Usuários do Sistema (Login e Controle de Acesso)
+import hashlib
+
+def gerar_hash_senha(senha: str) -> str:
+    return hashlib.sha256(senha.encode('utf-8')).hexdigest()
+
+class Usuario(Base):
+    __tablename__ = "usuarios"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True, index=True)
+    nome = Column(String)
+    senha_hash = Column(String)
+    perfil = Column(String, default="admin") # admin, operador
+    ativo = Column(Integer, default=1)
+
 Base.metadata.create_all(bind=engine)
 
 def get_db():
@@ -153,10 +169,88 @@ class ParametroUpdate(BaseModel):
 class StatusUpdate(BaseModel):
     status: str
 
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+class ManutencaoUpdate(BaseModel):
+    data: str
+    horario: str = ""
+    turno: str = "Matutino"
+    categoria: str
+    tipo_manutencao: str = "Corretiva"
+    item: str
+    setor: str
+    descricao: str
+    quantidade: float = 1.0
+    numero_chamado: str = ""
+    responsavel_entrega: str = ""
+    responsavel_recebimento: str = ""
+    status: str = "Pendente"
+    data_conclusao: str = ""
+    observacoes: str = ""
+    retrabalho: int = 0
+
+class RoupariaUpdate(BaseModel):
+    data: str
+    horario: str = ""
+    turno: str = "Matutino"
+    tipo_registro: str = "Estoque"
+    item_enxoval: str
+    setor: str
+    qtd_pecas: float = 0.0
+    qtd_hamper: float = 0.0
+    peso_kg: float = 0.0
+    responsavel_unidade: str = ""
+    responsavel_terceirizada: str = "LAVARE"
+    inconformidade: str = ""
+
 # ==============================================================================
 # 3. ROTAS DA API
 # ==============================================================================
 app = FastAPI(title="SaaS Gestão de Manutenção & Rouparia - PS Anil", version="3.0")
+
+@app.on_event("startup")
+def inicializar_usuarios_padrao():
+    db = SessionLocal()
+    try:
+        if db.query(Usuario).count() == 0:
+            admin = Usuario(
+                username="admin",
+                nome="Administrador PS Anil",
+                senha_hash=gerar_hash_senha("anil2026"),
+                perfil="admin",
+                ativo=1
+            )
+            operador = Usuario(
+                username="plantao",
+                nome="Plantão PS Anil",
+                senha_hash=gerar_hash_senha("psanil"),
+                perfil="operador",
+                ativo=1
+            )
+            db.add_all([admin, operador])
+            db.commit()
+    except Exception as e:
+        print(f"Erro ao inicializar usuários padrão: {e}")
+    finally:
+        db.close()
+
+# --- AUTENTICAÇÃO / LOGIN ---
+@app.post("/api/login")
+def fazer_login(dados: LoginRequest, db: Session = Depends(get_db)):
+    u = db.query(Usuario).filter(Usuario.username == dados.username.strip(), Usuario.ativo == 1).first()
+    if not u or u.senha_hash != gerar_hash_senha(dados.password.strip()):
+        raise HTTPException(status_code=401, detail="Usuário ou senha incorretos.")
+    return {
+        "status": "sucesso",
+        "usuario": {
+            "id": u.id,
+            "username": u.username,
+            "nome": u.nome,
+            "perfil": u.perfil
+        }
+    }
 
 # --- MANUTENÇÃO ---
 @app.post("/api/manutencao")
@@ -250,6 +344,43 @@ def listar_manutencoes(
     registros = q.order_by(desc(Manutencao.id)).all()
     return registros
 
+@app.get("/api/manutencao/{id}")
+def obter_manutencao(id: int, db: Session = Depends(get_db)):
+    reg = db.query(Manutencao).filter(Manutencao.id == id).first()
+    if not reg:
+        raise HTTPException(status_code=404, detail="Registro não encontrado")
+    return reg
+
+@app.put("/api/manutencao/{id}")
+def atualizar_manutencao(id: int, dados: ManutencaoUpdate, db: Session = Depends(get_db)):
+    reg = db.query(Manutencao).filter(Manutencao.id == id).first()
+    if not reg:
+        raise HTTPException(status_code=404, detail="Registro não encontrado")
+    
+    reg.data = dados.data
+    try:
+        p = dados.data.split("/")
+        reg.mes_ano = f"{p[1]}/{p[2]}"
+    except Exception:
+        pass
+    reg.horario = dados.horario
+    reg.turno = dados.turno
+    reg.categoria = dados.categoria
+    reg.tipo_manutencao = dados.tipo_manutencao
+    reg.item = dados.item
+    reg.setor = dados.setor
+    reg.descricao = dados.descricao
+    reg.quantidade = dados.quantidade
+    reg.numero_chamado = dados.numero_chamado
+    reg.responsavel_entrega = dados.responsavel_entrega
+    reg.responsavel_recebimento = dados.responsavel_recebimento
+    reg.status = dados.status
+    reg.data_conclusao = dados.data_conclusao
+    reg.observacoes = dados.observacoes
+    reg.retrabalho = dados.retrabalho
+    db.commit()
+    return {"status": "sucesso", "mensagem": f"Chamado {reg.codigo_id} atualizado com sucesso!"}
+
 @app.patch("/api/manutencao/{id}/status")
 def atualizar_status_manutencao(id: int, dados: StatusUpdate, db: Session = Depends(get_db)):
     reg = db.query(Manutencao).filter(Manutencao.id == id).first()
@@ -338,6 +469,39 @@ def listar_rouparia(
             (Rouparia.inconformidade.like(termo))
         )
     return q.order_by(desc(Rouparia.id)).all()
+
+@app.get("/api/rouparia/{id}")
+def obter_rouparia(id: int, db: Session = Depends(get_db)):
+    reg = db.query(Rouparia).filter(Rouparia.id == id).first()
+    if not reg:
+        raise HTTPException(status_code=404, detail="Registro não encontrado")
+    return reg
+
+@app.put("/api/rouparia/{id}")
+def atualizar_rouparia(id: int, dados: RoupariaUpdate, db: Session = Depends(get_db)):
+    reg = db.query(Rouparia).filter(Rouparia.id == id).first()
+    if not reg:
+        raise HTTPException(status_code=404, detail="Registro não encontrado")
+        
+    reg.data = dados.data
+    try:
+        p = dados.data.split("/")
+        reg.mes_ano = f"{p[1]}/{p[2]}"
+    except Exception:
+        pass
+    reg.horario = dados.horario
+    reg.turno = dados.turno
+    reg.tipo_registro = dados.tipo_registro
+    reg.item_enxoval = dados.item_enxoval
+    reg.setor = dados.setor
+    reg.qtd_pecas = dados.qtd_pecas
+    reg.qtd_hamper = dados.qtd_hamper
+    reg.peso_kg = dados.peso_kg
+    reg.responsavel_unidade = dados.responsavel_unidade
+    reg.responsavel_terceirizada = dados.responsavel_terceirizada
+    reg.inconformidade = dados.inconformidade
+    db.commit()
+    return {"status": "sucesso", "mensagem": f"Movimentação {reg.codigo_id} atualizada com sucesso!"}
 
 @app.delete("/api/rouparia/{id}")
 def excluir_rouparia(id: int, db: Session = Depends(get_db)):
@@ -1003,63 +1167,129 @@ def painel_principal():
             }
         </style>
     </head>
-    <body class="bg-slate-100 text-slate-800 min-h-screen flex flex-col">
+    <body class="bg-slate-100 text-slate-800 min-h-screen flex flex-col font-sans">
         
-        <!-- CABEÇALHO OFICIAL COM IDENTIDADE PS ANIL / SEMUS -->
-        <header class="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-sm">
-            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex flex-wrap justify-between items-center gap-4">
-                <div class="flex items-center gap-3">
-                    <div class="w-11 h-11 rounded-xl bg-gradient-to-tr from-blue-700 to-sky-500 flex items-center justify-center text-white shadow-md shadow-blue-500/20">
-                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <!-- TELA DE LOGIN (ACESSO RESTRITO) -->
+        <div id="telaLogin" class="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900">
+            <div class="max-w-md w-full bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden transform transition-all">
+                <div class="bg-gradient-to-r from-blue-900 via-blue-800 to-indigo-900 text-white p-8 text-center relative overflow-hidden">
+                    <div class="w-16 h-16 mx-auto mb-3 rounded-2xl bg-white/10 backdrop-blur-md flex items-center justify-center border border-white/20 shadow-inner">
+                        <svg class="w-9 h-9 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
                         </svg>
                     </div>
+                    <h2 class="text-2xl font-black tracking-tight">PS ANIL</h2>
+                    <p class="text-xs text-blue-200 font-semibold uppercase tracking-wider mt-1">SEMUS - São Luís</p>
+                    <p class="text-xs text-blue-300 mt-2">Sistema Integrado de Manutenção & Rouparia</p>
+                </div>
+
+                <form id="formLogin" onsubmit="executarLogin(event)" class="p-8 space-y-5">
                     <div>
-                        <div class="flex items-center gap-2">
-                            <h1 class="text-xl font-extrabold text-slate-900 tracking-tight">PS ANIL</h1>
-                            <span class="bg-blue-100 text-blue-900 text-[11px] font-bold px-2.5 py-0.5 rounded-full border border-blue-200">SISTEMA INTEGRADO</span>
-                            <span class="text-xs text-slate-400 font-semibold hidden sm:inline">| SEMUS São Luís</span>
+                        <label class="block text-xs font-bold text-slate-700 uppercase mb-1.5">Usuário</label>
+                        <div class="relative">
+                            <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
+                            </span>
+                            <input type="text" id="loginUsuario" required placeholder="Digite seu usuário..." class="w-full pl-10 pr-4 py-2.5 text-sm bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 focus:bg-white focus:outline-none transition">
                         </div>
-                        <p class="text-xs text-slate-500">Módulo de Manutenção Predial, Rouparia, Consolidado e Configurações</p>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 uppercase mb-1.5">Senha de Acesso</label>
+                        <div class="relative">
+                            <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+                            </span>
+                            <input type="password" id="loginSenha" required placeholder="••••••••" class="w-full pl-10 pr-4 py-2.5 text-sm bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 focus:bg-white focus:outline-none transition">
+                        </div>
+                    </div>
+
+                    <div id="loginErro" class="hidden p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs font-semibold text-rose-700 flex items-center gap-2">
+                        <span>⚠️</span> <span id="loginErroMsg">Usuário ou senha incorretos.</span>
+                    </div>
+
+                    <button type="submit" id="btnLogin" class="w-full py-3 bg-blue-900 hover:bg-blue-800 text-white font-black text-sm rounded-xl shadow-lg shadow-blue-900/30 transition flex items-center justify-center gap-2">
+                        <span>🔐</span> Entrar no Sistema
+                    </button>
+
+                    <div class="p-3.5 bg-blue-50 border border-blue-200 rounded-xl text-center">
+                        <p class="text-[11px] text-blue-950 font-bold">Credenciais de Acesso:</p>
+                        <p class="text-[11px] text-blue-800 mt-0.5">Admin: <span class="font-mono font-bold">admin</span> | Senha: <span class="font-mono font-bold">anil2026</span></p>
+                        <p class="text-[11px] text-blue-800">Plantão: <span class="font-mono font-bold">plantao</span> | Senha: <span class="font-mono font-bold">psanil</span></p>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- SISTEMA PRINCIPAL (Exibido após login) -->
+        <div id="telaSistema" class="hidden min-h-screen flex flex-col">
+            
+            <!-- CABEÇALHO OFICIAL COM IDENTIDADE PS ANIL / SEMUS -->
+            <header class="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-sm">
+                <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex flex-wrap justify-between items-center gap-4">
+                    <div class="flex items-center gap-3">
+                        <div class="w-11 h-11 rounded-xl bg-gradient-to-tr from-blue-700 to-sky-500 flex items-center justify-center text-white shadow-md shadow-blue-500/20">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
+                            </svg>
+                        </div>
+                        <div>
+                            <div class="flex items-center gap-2">
+                                <h1 class="text-xl font-extrabold text-slate-900 tracking-tight">PS ANIL</h1>
+                                <span class="bg-blue-100 text-blue-900 text-[11px] font-bold px-2.5 py-0.5 rounded-full border border-blue-200">SISTEMA INTEGRADO</span>
+                                <span class="text-xs text-slate-400 font-semibold hidden sm:inline">| SEMUS São Luís</span>
+                            </div>
+                            <p class="text-xs text-slate-500">Módulo de Manutenção Predial, Rouparia, Consolidado e Configurações</p>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center gap-2">
+                        <input type="file" id="inputArquivoExcel" accept=".xlsx" class="hidden" onchange="enviarPlanilhaExcel(event)">
+                        <button onclick="document.getElementById('inputArquivoExcel').click()" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-indigo-800 bg-indigo-50 hover:bg-indigo-100 border border-indigo-300 rounded-lg transition shadow-sm" title="Importar arquivo .xlsx da sua máquina para o banco">
+                            <svg class="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+                            Importar Planilha (.xlsx)
+                        </button>
+                        <button onclick="baixarConsolidadoExcel()" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-lg transition shadow-sm">
+                            <svg class="w-4 h-4 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                            Exportar Consolidado (.xlsx)
+                        </button>
+                        <a href="/api/exportar/manutencao/excel" target="_blank" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-300 rounded-lg transition shadow-sm">
+                            <svg class="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                            BD Manutenção (.xlsx)
+                        </a>
+
+                        <!-- Perfil e Logout -->
+                        <div class="flex items-center gap-2 border-l border-slate-300 pl-3 ml-1">
+                            <span class="text-xs font-bold text-slate-700 flex items-center gap-1.5" id="headerUsuarioBadge">
+                                <span class="w-2 h-2 rounded-full bg-emerald-500 inline-block animate-pulse"></span>
+                                <span id="nomeUsuarioLogado">Admin</span>
+                            </span>
+                            <button onclick="fazerLogout()" class="px-2.5 py-1 text-xs font-bold text-rose-700 hover:text-white hover:bg-rose-600 bg-rose-50 border border-rose-200 rounded-lg transition" title="Sair do sistema">
+                                Sair
+                            </button>
+                        </div>
                     </div>
                 </div>
 
-                <div class="flex items-center gap-2">
-                    <input type="file" id="inputArquivoExcel" accept=".xlsx" class="hidden" onchange="enviarPlanilhaExcel(event)">
-                    <button onclick="document.getElementById('inputArquivoExcel').click()" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-indigo-800 bg-indigo-50 hover:bg-indigo-100 border border-indigo-300 rounded-lg transition shadow-sm" title="Importar arquivo .xlsx da sua máquina para o banco">
-                        <svg class="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
-                        Importar Planilha (.xlsx)
+                <!-- NAVEGAÇÃO ENTRE ABAS -->
+                <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 border-t border-slate-200 flex space-x-1 overflow-x-auto text-xs font-semibold">
+                    <button onclick="mudarAba('lancamentos')" id="tabBtn-lancamentos" class="tab-btn active px-4 py-3 border-b-2 border-transparent text-slate-600 hover:text-blue-900 transition flex items-center gap-2">
+                        <span>✍️</span> Painel de Lançamentos
                     </button>
-                    <button onclick="baixarConsolidadoExcel()" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-lg transition shadow-sm">
-                        <svg class="w-4 h-4 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
-                        Exportar Consolidado (.xlsx)
+                    <button onclick="mudarAba('consolidado')" id="tabBtn-consolidado" class="tab-btn px-4 py-3 border-b-2 border-transparent text-slate-600 hover:text-blue-900 transition flex items-center gap-2">
+                        <span>📊</span> Consolidado de Indicadores
                     </button>
-                    <a href="/api/exportar/manutencao/excel" target="_blank" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-300 rounded-lg transition shadow-sm">
-                        <svg class="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
-                        BD Manutenção (.xlsx)
-                    </a>
+                    <button onclick="mudarAba('relatorios')" id="tabBtn-relatorios" class="tab-btn px-4 py-3 border-b-2 border-transparent text-slate-600 hover:text-blue-900 transition flex items-center gap-2">
+                        <span>📈</span> Relatórios & Gráficos
+                    </button>
+                    <button onclick="mudarAba('historico')" id="tabBtn-historico" class="tab-btn px-4 py-3 border-b-2 border-transparent text-slate-600 hover:text-blue-900 transition flex items-center gap-2">
+                        <span>🗄️</span> Base de Dados (Tabelas)
+                    </button>
+                    <button onclick="mudarAba('configuracoes')" id="tabBtn-configuracoes" class="tab-btn px-4 py-3 border-b-2 border-transparent text-slate-600 hover:text-blue-900 transition flex items-center gap-2">
+                        <span>⚙️</span> Configurações & Cadastros
+                    </button>
                 </div>
-            </div>
-
-            <!-- NAVEGAÇÃO ENTRE ABAS -->
-            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 border-t border-slate-200 flex space-x-1 overflow-x-auto text-xs font-semibold">
-                <button onclick="mudarAba('lancamentos')" id="tabBtn-lancamentos" class="tab-btn active px-4 py-3 border-b-2 border-transparent text-slate-600 hover:text-blue-900 transition flex items-center gap-2">
-                    <span>✍️</span> Painel de Lançamentos
-                </button>
-                <button onclick="mudarAba('consolidado')" id="tabBtn-consolidado" class="tab-btn px-4 py-3 border-b-2 border-transparent text-slate-600 hover:text-blue-900 transition flex items-center gap-2">
-                    <span>📊</span> Consolidado de Indicadores
-                </button>
-                <button onclick="mudarAba('relatorios')" id="tabBtn-relatorios" class="tab-btn px-4 py-3 border-b-2 border-transparent text-slate-600 hover:text-blue-900 transition flex items-center gap-2">
-                    <span>📈</span> Relatórios & Gráficos
-                </button>
-                <button onclick="mudarAba('historico')" id="tabBtn-historico" class="tab-btn px-4 py-3 border-b-2 border-transparent text-slate-600 hover:text-blue-900 transition flex items-center gap-2">
-                    <span>🗄️</span> Base de Dados (Tabelas)
-                </button>
-                <button onclick="mudarAba('configuracoes')" id="tabBtn-configuracoes" class="tab-btn px-4 py-3 border-b-2 border-transparent text-slate-600 hover:text-blue-900 transition flex items-center gap-2">
-                    <span>⚙️</span> Configurações & Cadastros
-                </button>
-            </div>
-        </header>
+            </header>
 
         <!-- CONTEÚDO PRINCIPAL -->
         <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1 w-full space-y-6">
@@ -1684,6 +1914,203 @@ def painel_principal():
             </section>
 
         </main>
+        </div><!-- Fim de telaSistema -->
+
+        <!-- MODAL: EDITAR MANUTENÇÃO -->
+        <div id="modalEditarManutencao" class="fixed inset-0 z-50 hidden overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+            <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-2xl w-full overflow-hidden">
+                <div class="px-6 py-4 bg-gradient-to-r from-blue-900 to-indigo-900 text-white flex justify-between items-center">
+                    <div>
+                        <h3 class="text-base font-bold flex items-center gap-2">
+                            <span>✏️</span> Editar Chamado de Manutenção <span id="editManutCodigo" class="bg-white/20 px-2.5 py-0.5 rounded-full text-xs">#</span>
+                        </h3>
+                        <p class="text-xs text-blue-200">Altere os dados necessários e salve para atualizar no banco de dados</p>
+                    </div>
+                    <button onclick="fecharModalEditarManut()" class="text-white/70 hover:text-white transition text-lg">✕</button>
+                </div>
+                <form id="formEditarManut" onsubmit="salvarEdicaoManutencao(event)" class="p-6 space-y-4 max-h-[80vh] overflow-y-auto text-xs">
+                    <input type="hidden" id="editManutId">
+                    <div class="grid grid-cols-3 gap-3">
+                        <div>
+                            <label class="block font-bold text-slate-700 uppercase mb-1">Data *</label>
+                            <input type="text" id="editManutData" class="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500" required>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-700 uppercase mb-1">Horário</label>
+                            <input type="text" id="editManutHorario" class="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-700 uppercase mb-1">Turno</label>
+                            <select id="editManutTurno" class="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500">
+                                <option value="Matutino">Matutino</option>
+                                <option value="Vespertino">Vespertino</option>
+                                <option value="Noturno">Noturno</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block font-bold text-slate-700 uppercase mb-1">Categoria *</label>
+                            <select id="editManutCategoria" class="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500" required></select>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-700 uppercase mb-1">Tipo de Manutenção *</label>
+                            <select id="editManutTipo" class="w-full border border-slate-300 rounded-lg p-2.5 font-bold focus:ring-2 focus:ring-blue-500">
+                                <option value="Corretiva">Corretiva</option>
+                                <option value="Preventiva">Preventiva</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block font-bold text-slate-700 uppercase mb-1">Item / Equipamento / Insumo *</label>
+                            <select id="editManutItem" class="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500" required></select>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-700 uppercase mb-1">Setor / Local *</label>
+                            <select id="editManutSetor" class="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500" required></select>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block font-bold text-slate-700 uppercase mb-1">Descrição / Especificação *</label>
+                        <textarea id="editManutDescricao" rows="2" class="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500" required></textarea>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block font-bold text-slate-700 uppercase mb-1">Quantidade *</label>
+                            <input type="number" id="editManutQuantidade" step="1" min="1" class="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500" required>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-700 uppercase mb-1">Nº Chamado / Pedido</label>
+                            <input type="text" id="editManutNumeroChamado" class="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500">
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block font-bold text-slate-700 uppercase mb-1">Resp. Entrega / Vistoria</label>
+                            <input type="text" id="editManutRespEntrega" class="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-700 uppercase mb-1">Resp. Recebimento / Acomp.</label>
+                            <input type="text" id="editManutRespRecebimento" class="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500">
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block font-bold text-slate-700 uppercase mb-1">Status / Situação *</label>
+                            <select id="editManutStatus" class="w-full border border-slate-300 rounded-lg p-2.5 font-bold focus:ring-2 focus:ring-blue-500">
+                                <option value="Pendente">Pendente</option>
+                                <option value="Solicitado">Solicitado</option>
+                                <option value="Ok">Ok</option>
+                                <option value="Concluído">Concluído</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-700 uppercase mb-1">Data Conclusão / Retorno</label>
+                            <input type="text" id="editManutDataConclusao" placeholder="DD/MM/AAAA" class="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block font-bold text-slate-700 uppercase mb-1">Observações Gerais</label>
+                        <textarea id="editManutObservacoes" rows="2" class="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500"></textarea>
+                    </div>
+                    <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center justify-between">
+                        <div>
+                            <span class="font-bold text-amber-900 block">Retrabalho</span>
+                            <span class="text-[11px] text-amber-700">Marque se este chamado for um retrabalho de serviço anterior</span>
+                        </div>
+                        <input type="checkbox" id="editManutRetrabalho" class="w-5 h-5 text-blue-600 rounded cursor-pointer">
+                    </div>
+                    <div class="pt-3 border-t flex justify-end gap-2">
+                        <button type="button" onclick="fecharModalEditarManut()" class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-lg transition">Cancelar</button>
+                        <button type="submit" id="btnSalvarEditManut" class="px-5 py-2 bg-blue-900 hover:bg-blue-800 text-white font-bold rounded-lg shadow-sm transition">Salvar Alterações</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- MODAL: EDITAR ROUPARIA -->
+        <div id="modalEditarRouparia" class="fixed inset-0 z-50 hidden overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+            <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-2xl w-full overflow-hidden">
+                <div class="px-6 py-4 bg-gradient-to-r from-blue-900 to-indigo-900 text-white flex justify-between items-center">
+                    <div>
+                        <h3 class="text-base font-bold flex items-center gap-2">
+                            <span>✏️</span> Editar Movimentação de Rouparia <span id="editRoupaCodigo" class="bg-white/20 px-2.5 py-0.5 rounded-full text-xs">#</span>
+                        </h3>
+                        <p class="text-xs text-blue-200">Altere os dados da movimentação de enxoval e salve no banco</p>
+                    </div>
+                    <button onclick="fecharModalEditarRoupa()" class="text-white/70 hover:text-white transition text-lg">✕</button>
+                </div>
+                <form id="formEditarRoupa" onsubmit="salvarEdicaoRouparia(event)" class="p-6 space-y-4 max-h-[80vh] overflow-y-auto text-xs">
+                    <input type="hidden" id="editRoupaId">
+                    <div class="grid grid-cols-3 gap-3">
+                        <div>
+                            <label class="block font-bold text-slate-700 uppercase mb-1">Data *</label>
+                            <input type="text" id="editRoupaData" class="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500" required>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-700 uppercase mb-1">Horário</label>
+                            <input type="text" id="editRoupaHorario" class="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-700 uppercase mb-1">Turno</label>
+                            <select id="editRoupaTurno" class="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500">
+                                <option value="Matutino">Matutino</option>
+                                <option value="Vespertino">Vespertino</option>
+                                <option value="Noturno">Noturno</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block font-bold text-slate-700 uppercase mb-1">Tipo de Movimentação *</label>
+                            <select id="editRoupaTipo" class="w-full border border-slate-300 rounded-lg p-2.5 font-bold focus:ring-2 focus:ring-blue-500">
+                                <option value="Estoque">Estoque</option>
+                                <option value="Recolhimento Sujo">Recolhimento Sujo</option>
+                                <option value="Entrega aos Setores">Entrega aos Setores</option>
+                                <option value="Devolução">Devolução por Não Conformidade</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-700 uppercase mb-1">Item Enxoval *</label>
+                            <select id="editRoupaItem" class="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500" required></select>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-3 gap-3">
+                        <div>
+                            <label class="block font-bold text-slate-700 uppercase mb-1">Setor / Local *</label>
+                            <select id="editRoupaSetor" class="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500" required></select>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-700 uppercase mb-1">Qtd Peças</label>
+                            <input type="number" id="editRoupaQtdPecas" step="1" class="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-700 uppercase mb-1">Peso (KG)</label>
+                            <input type="number" id="editRoupaPesoKg" step="0.01" class="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500">
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block font-bold text-slate-700 uppercase mb-1">Resp. Unidade</label>
+                            <input type="text" id="editRoupaRespUnidade" class="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-700 uppercase mb-1">Resp. Terceirizada</label>
+                            <input type="text" id="editRoupaRespTerceirizada" class="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block font-bold text-slate-700 uppercase mb-1">Inconformidade / Ocorrência</label>
+                        <textarea id="editRoupaInconformidade" rows="2" class="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500"></textarea>
+                    </div>
+                    <div class="pt-3 border-t flex justify-end gap-2">
+                        <button type="button" onclick="fecharModalEditarRoupa()" class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-lg transition">Cancelar</button>
+                        <button type="submit" id="btnSalvarEditRoupa" class="px-5 py-2 bg-blue-900 hover:bg-blue-800 text-white font-bold rounded-lg shadow-sm transition">Salvar Alterações</button>
+                    </div>
+                </form>
+            </div>
+        </div>
 
         <!-- TOAST FEEDBACK NOTIFICAÇÃO -->
         <div id="toastBox" class="fixed bottom-6 right-6 z-50 transform translate-y-20 opacity-0 transition-all duration-300 pointer-events-none">
@@ -1762,21 +2189,44 @@ def painel_principal():
                     const selItemRoupa = document.getElementById('roupaItem');
                     const selSetorRoupa = document.getElementById('roupaSetor');
 
+                    const editCat = document.getElementById('editManutCategoria');
+                    const editItemManut = document.getElementById('editManutItem');
+                    const editSetorManut = document.getElementById('editManutSetor');
+                    const editItemRoupa = document.getElementById('editRoupaItem');
+                    const editSetorRoupa = document.getElementById('editRoupaSetor');
+
                     selCat.innerHTML = '';
                     selItemManut.innerHTML = '';
                     selSetorManut.innerHTML = '';
                     selItemRoupa.innerHTML = '';
                     selSetorRoupa.innerHTML = '';
 
+                    if (editCat) editCat.innerHTML = '';
+                    if (editItemManut) editItemManut.innerHTML = '';
+                    if (editSetorManut) editSetorManut.innerHTML = '';
+                    if (editItemRoupa) editItemRoupa.innerHTML = '';
+                    if (editSetorRoupa) editSetorRoupa.innerHTML = '';
+
                     itens.forEach(i => {
                         const opt = `<option value="${i.nome}">${i.nome}</option>`;
-                        if (i.tipo === 'categoria_manutencao') selCat.innerHTML += opt;
-                        if (i.tipo === 'item_manutencao') selItemManut.innerHTML += opt;
+                        if (i.tipo === 'categoria_manutencao') {
+                            selCat.innerHTML += opt;
+                            if (editCat) editCat.innerHTML += opt;
+                        }
+                        if (i.tipo === 'item_manutencao') {
+                            selItemManut.innerHTML += opt;
+                            if (editItemManut) editItemManut.innerHTML += opt;
+                        }
                         if (i.tipo === 'setor') {
                             selSetorManut.innerHTML += opt;
                             selSetorRoupa.innerHTML += opt;
+                            if (editSetorManut) editSetorManut.innerHTML += opt;
+                            if (editSetorRoupa) editSetorRoupa.innerHTML += opt;
                         }
-                        if (i.tipo === 'item_enxoval') selItemRoupa.innerHTML += opt;
+                        if (i.tipo === 'item_enxoval') {
+                            selItemRoupa.innerHTML += opt;
+                            if (editItemRoupa) editItemRoupa.innerHTML += opt;
+                        }
                     });
 
                     // Setar data de hoje nos inputs
@@ -2137,9 +2587,14 @@ def painel_principal():
                                 <td class="p-3 font-bold text-center">${r.quantidade}</td>
                                 <td class="p-3 text-center"><span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${badgeCor}">${r.status}</span></td>
                                 <td class="p-3 text-center">
-                                    <button onclick="excluirManutencao(${r.id})" class="text-slate-400 hover:text-rose-600 transition" title="Excluir">
-                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                                    </button>
+                                    <div class="flex items-center justify-center gap-1.5">
+                                        <button onclick="abrirModalEditarManut(${r.id})" class="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition" title="Editar este chamado">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                                        </button>
+                                        <button onclick="excluirManutencao(${r.id})" class="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition" title="Excluir">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                        </button>
+                                    </div>
                                 </td>
                             </tr>
                         `;
@@ -2166,9 +2621,14 @@ def painel_principal():
                                 <td class="p-3 text-center">${r.peso_kg > 0 ? r.peso_kg.toFixed(2) + ' kg' : '-'}</td>
                                 <td class="p-3">${r.responsavel_unidade || '-'}</td>
                                 <td class="p-3 text-center">
-                                    <button onclick="excluirRouparia(${r.id})" class="text-slate-400 hover:text-rose-600 transition" title="Excluir">
-                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                                    </button>
+                                    <div class="flex items-center justify-center gap-1.5">
+                                        <button onclick="abrirModalEditarRoupa(${r.id})" class="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition" title="Editar esta movimentação">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                                        </button>
+                                        <button onclick="excluirRouparia(${r.id})" class="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition" title="Excluir">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                        </button>
+                                    </div>
                                 </td>
                             </tr>
                         `;
@@ -2282,9 +2742,235 @@ def painel_principal():
                 carregarDropdownsFormulario();
             }
 
-            // Inicialização
+            // ===============================================================
+            // AUTENTICAÇÃO E LOGIN
+            // ===============================================================
+            function verificarAutenticacao() {
+                const usuarioStr = localStorage.getItem('usuario_ps_anil');
+                const telaLogin = document.getElementById('telaLogin');
+                const telaSistema = document.getElementById('telaSistema');
+                
+                if (usuarioStr) {
+                    try {
+                        const usuario = JSON.parse(usuarioStr);
+                        telaLogin.classList.add('hidden');
+                        telaSistema.classList.remove('hidden');
+                        document.getElementById('nomeUsuarioLogado').textContent = usuario.nome || usuario.username;
+                        carregarDropdownsFormulario();
+                        carregarConsolidado();
+                    } catch(e) {
+                        fazerLogout();
+                    }
+                } else {
+                    telaLogin.classList.remove('hidden');
+                    telaSistema.classList.add('hidden');
+                }
+            }
+
+            async function executarLogin(e) {
+                e.preventDefault();
+                const btn = document.getElementById('btnLogin');
+                const erroBox = document.getElementById('loginErro');
+                const erroMsg = document.getElementById('loginErroMsg');
+                erroBox.classList.add('hidden');
+                btn.disabled = true;
+
+                const username = document.getElementById('loginUsuario').value.trim();
+                const password = document.getElementById('loginSenha').value.trim();
+
+                try {
+                    const res = await fetch('/api/login', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ username, password })
+                    });
+                    const d = await res.json();
+                    if (res.ok && d.status === 'sucesso') {
+                        localStorage.setItem('usuario_ps_anil', JSON.stringify(d.usuario));
+                        mostrarToast(`Bem-vindo(a), ${d.usuario.nome}!`);
+                        verificarAutenticacao();
+                    } else {
+                        erroMsg.textContent = d.detail || 'Usuário ou senha incorretos.';
+                        erroBox.classList.remove('hidden');
+                    }
+                } catch(err) {
+                    erroMsg.textContent = 'Erro ao conectar ao servidor.';
+                    erroBox.classList.remove('hidden');
+                } finally {
+                    btn.disabled = false;
+                }
+            }
+
+            function fazerLogout() {
+                localStorage.removeItem('usuario_ps_anil');
+                document.getElementById('telaSistema').classList.add('hidden');
+                document.getElementById('telaLogin').classList.remove('hidden');
+                document.getElementById('loginSenha').value = '';
+                mostrarToast('Sessão encerrada.');
+            }
+
+            // ===============================================================
+            // EDIÇÃO DE REGISTROS DO BANCO DE DADOS (MODAIS)
+            // ===============================================================
+            async function abrirModalEditarManut(id) {
+                try {
+                    const res = await fetch(`/api/manutencao/${id}`);
+                    if (!res.ok) throw new Error('Não encontrado');
+                    const reg = await res.json();
+                    
+                    document.getElementById('editManutId').value = reg.id;
+                    document.getElementById('editManutCodigo').textContent = reg.codigo_id || `#${reg.id}`;
+                    document.getElementById('editManutData').value = reg.data || '';
+                    document.getElementById('editManutHorario').value = reg.horario || '';
+                    document.getElementById('editManutTurno').value = reg.turno || 'Matutino';
+                    document.getElementById('editManutCategoria').value = reg.categoria || '';
+                    document.getElementById('editManutTipo').value = reg.tipo_manutencao || 'Corretiva';
+                    document.getElementById('editManutItem').value = reg.item || '';
+                    document.getElementById('editManutSetor').value = reg.setor || '';
+                    document.getElementById('editManutDescricao').value = reg.descricao || '';
+                    document.getElementById('editManutQuantidade').value = reg.quantidade || 1;
+                    document.getElementById('editManutNumeroChamado').value = reg.numero_chamado || '';
+                    document.getElementById('editManutRespEntrega').value = reg.responsavel_entrega || '';
+                    document.getElementById('editManutRespRecebimento').value = reg.responsavel_recebimento || '';
+                    document.getElementById('editManutStatus').value = reg.status || 'Pendente';
+                    document.getElementById('editManutDataConclusao').value = reg.data_conclusao || '';
+                    document.getElementById('editManutObservacoes').value = reg.observacoes || '';
+                    document.getElementById('editManutRetrabalho').checked = !!reg.retrabalho;
+
+                    document.getElementById('modalEditarManutencao').classList.remove('hidden');
+                } catch(e) {
+                    mostrarToast('Erro ao carregar dados do registro de manutenção.', 'erro');
+                }
+            }
+
+            function fecharModalEditarManut() {
+                document.getElementById('modalEditarManutencao').classList.add('hidden');
+            }
+
+            async function salvarEdicaoManutencao(e) {
+                e.preventDefault();
+                const id = document.getElementById('editManutId').value;
+                const btn = document.getElementById('btnSalvarEditManut');
+                btn.disabled = true;
+
+                const payload = {
+                    data: document.getElementById('editManutData').value.trim(),
+                    horario: document.getElementById('editManutHorario').value.trim(),
+                    turno: document.getElementById('editManutTurno').value,
+                    categoria: document.getElementById('editManutCategoria').value,
+                    tipo_manutencao: document.getElementById('editManutTipo').value,
+                    item: document.getElementById('editManutItem').value,
+                    setor: document.getElementById('editManutSetor').value,
+                    descricao: document.getElementById('editManutDescricao').value.trim(),
+                    quantidade: parseFloat(document.getElementById('editManutQuantidade').value) || 1.0,
+                    numero_chamado: document.getElementById('editManutNumeroChamado').value.trim(),
+                    responsavel_entrega: document.getElementById('editManutRespEntrega').value.trim(),
+                    responsavel_recebimento: document.getElementById('editManutRespRecebimento').value.trim(),
+                    status: document.getElementById('editManutStatus').value,
+                    data_conclusao: document.getElementById('editManutDataConclusao').value.trim(),
+                    observacoes: document.getElementById('editManutObservacoes').value.trim(),
+                    retrabalho: document.getElementById('editManutRetrabalho').checked ? 1 : 0
+                };
+
+                try {
+                    const res = await fetch(`/api/manutencao/${id}`, {
+                        method: 'PUT',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify(payload)
+                    });
+                    if (res.ok) {
+                        mostrarToast('Registro de manutenção atualizado com sucesso no banco!');
+                        fecharModalEditarManut();
+                        carregarHistorico();
+                        carregarConsolidado();
+                        carregarRelatorios();
+                    } else {
+                        const err = await res.json();
+                        mostrarToast(err.detail || 'Erro ao salvar alterações.', 'erro');
+                    }
+                } catch(err) {
+                    mostrarToast('Falha na comunicação ao salvar edição.', 'erro');
+                } finally {
+                    btn.disabled = false;
+                }
+            }
+
+            async function abrirModalEditarRoupa(id) {
+                try {
+                    const res = await fetch(`/api/rouparia/${id}`);
+                    if (!res.ok) throw new Error('Não encontrado');
+                    const reg = await res.json();
+
+                    document.getElementById('editRoupaId').value = reg.id;
+                    document.getElementById('editRoupaCodigo').textContent = reg.codigo_id || `#${reg.id}`;
+                    document.getElementById('editRoupaData').value = reg.data || '';
+                    document.getElementById('editRoupaHorario').value = reg.horario || '';
+                    document.getElementById('editRoupaTurno').value = reg.turno || 'Matutino';
+                    document.getElementById('editRoupaTipo').value = reg.tipo_registro || 'Estoque';
+                    document.getElementById('editRoupaItem').value = reg.item_enxoval || '';
+                    document.getElementById('editRoupaSetor').value = reg.setor || '';
+                    document.getElementById('editRoupaQtdPecas').value = reg.qtd_pecas || 0;
+                    document.getElementById('editRoupaPesoKg').value = reg.peso_kg || 0;
+                    document.getElementById('editRoupaRespUnidade').value = reg.responsavel_unidade || '';
+                    document.getElementById('editRoupaRespTerceirizada').value = reg.responsavel_terceirizada || 'LAVARE';
+                    document.getElementById('editRoupaInconformidade').value = reg.inconformidade || '';
+
+                    document.getElementById('modalEditarRouparia').classList.remove('hidden');
+                } catch(e) {
+                    mostrarToast('Erro ao carregar movimentação de rouparia.', 'erro');
+                }
+            }
+
+            function fecharModalEditarRoupa() {
+                document.getElementById('modalEditarRouparia').classList.add('hidden');
+            }
+
+            async function salvarEdicaoRouparia(e) {
+                e.preventDefault();
+                const id = document.getElementById('editRoupaId').value;
+                const btn = document.getElementById('btnSalvarEditRoupa');
+                btn.disabled = true;
+
+                const payload = {
+                    data: document.getElementById('editRoupaData').value.trim(),
+                    horario: document.getElementById('editRoupaHorario').value.trim(),
+                    turno: document.getElementById('editRoupaTurno').value,
+                    tipo_registro: document.getElementById('editRoupaTipo').value,
+                    item_enxoval: document.getElementById('editRoupaItem').value,
+                    setor: document.getElementById('editRoupaSetor').value,
+                    qtd_pecas: parseFloat(document.getElementById('editRoupaQtdPecas').value) || 0.0,
+                    peso_kg: parseFloat(document.getElementById('editRoupaPesoKg').value) || 0.0,
+                    responsavel_unidade: document.getElementById('editRoupaRespUnidade').value.trim(),
+                    responsavel_terceirizada: document.getElementById('editRoupaRespTerceirizada').value.trim(),
+                    inconformidade: document.getElementById('editRoupaInconformidade').value.trim()
+                };
+
+                try {
+                    const res = await fetch(`/api/rouparia/${id}`, {
+                        method: 'PUT',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify(payload)
+                    });
+                    if (res.ok) {
+                        mostrarToast('Movimentação de rouparia atualizada com sucesso no banco!');
+                        fecharModalEditarRoupa();
+                        carregarHistorico();
+                        carregarConsolidado();
+                        carregarRelatorios();
+                    } else {
+                        const err = await res.json();
+                        mostrarToast(err.detail || 'Erro ao salvar alterações.', 'erro');
+                    }
+                } catch(err) {
+                    mostrarToast('Falha na comunicação ao salvar edição.', 'erro');
+                } finally {
+                    btn.disabled = false;
+                }
+            }
+
+            // Inicialização com Verificação de Login
             window.addEventListener('DOMContentLoaded', () => {
-                carregarDropdownsFormulario();
+                verificarAutenticacao();
             });
         </script>
     </body>

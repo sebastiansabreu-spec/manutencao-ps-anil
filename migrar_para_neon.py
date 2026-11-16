@@ -12,7 +12,7 @@ from sqlalchemy.orm import sessionmaker
 
 # Importar modelos do app
 import main
-from main import Base, Manutencao, Rouparia, ConfiguracaoItem, Parametro
+from main import Base, Manutencao, Rouparia, ConfiguracaoItem, Parametro, Usuario
 
 def migrar(neon_url=None):
     url_destino = neon_url or os.getenv("DATABASE_URL")
@@ -117,6 +117,20 @@ def migrar(neon_url=None):
         ))
     db_destino.commit()
     print(f"  ✓ {len(roupas)} registros de Rouparia transferidos.")
+
+    # 5. Usuários
+    users = db_origem.query(Usuario).all()
+    db_destino.query(Usuario).delete()
+    for u in users:
+        db_destino.add(Usuario(
+            username=u.username,
+            nome=u.nome,
+            senha_hash=u.senha_hash,
+            perfil=u.perfil,
+            ativo=u.ativo
+        ))
+    db_destino.commit()
+    print(f"  ✓ {len(users)} usuários transferidos.")
 
     db_origem.close()
     db_destino.close()
