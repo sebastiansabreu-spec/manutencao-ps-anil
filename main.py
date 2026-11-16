@@ -333,13 +333,15 @@ def listar_manutencoes(
     tipo: str = Query(None),
     setor: str = Query(None),
     mes_ano: str = Query(None),
+    turno: str = Query(None),
+    retrabalho: str = Query(None),
     busca: str = Query(None),
     db: Session = Depends(get_db)
 ):
     q = db.query(Manutencao)
     if status and status != "Todos":
         q = q.filter(Manutencao.status == status)
-    if categoria and categoria != "Todas":
+    if categoria and categoria not in ["Todas", "Todos"]:
         q = q.filter(Manutencao.categoria == categoria)
     if tipo and tipo != "Todos":
         q = q.filter(Manutencao.tipo_manutencao == tipo)
@@ -347,6 +349,13 @@ def listar_manutencoes(
         q = q.filter(Manutencao.setor == setor)
     if mes_ano and mes_ano != "Todos":
         q = q.filter(Manutencao.mes_ano == mes_ano)
+    if turno and turno != "Todos":
+        q = q.filter(Manutencao.turno == turno)
+    if retrabalho and retrabalho != "Todos":
+        if retrabalho in ["Sim", "1", "true", "True"]:
+            q = q.filter(Manutencao.retrabalho == 1)
+        elif retrabalho in ["Não", "Nao", "0", "false", "False"]:
+            q = q.filter(Manutencao.retrabalho == 0)
     if busca:
         termo = f"%{busca}%"
         q = q.filter(
@@ -454,6 +463,7 @@ def listar_rouparia(
     item: str = Query(None),
     setor: str = Query(None),
     mes_ano: str = Query(None),
+    turno: str = Query(None),
     busca: str = Query(None),
     db: Session = Depends(get_db)
 ):
@@ -466,6 +476,8 @@ def listar_rouparia(
         q = q.filter(Rouparia.setor == setor)
     if mes_ano and mes_ano != "Todos":
         q = q.filter(Rouparia.mes_ano == mes_ano)
+    if turno and turno != "Todos":
+        q = q.filter(Rouparia.turno == turno)
     if busca:
         termo = f"%{busca}%"
         q = q.filter(
@@ -1751,21 +1763,132 @@ def painel_principal():
             </section>
 
             <!-- =============================================================== -->
-            <!-- ABA 4: BASE DE DADOS (TABELAS DE CONSULTA)                      -->
+            <!-- ABA 4: BASE DE DADOS (TABELAS DE CONSULTA E FILTROS)            -->
             <!-- =============================================================== -->
             <section id="aba-historico" class="space-y-6 hidden">
-                <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-wrap justify-between items-center gap-4">
-                    <div class="flex items-center gap-3">
-                        <button onclick="alternarTabelaHistorico('manutencao')" id="btnHistManut" class="px-4 py-2 text-xs font-bold rounded-lg bg-blue-900 text-white shadow-sm transition">
-                            Tabela Manutenção
-                        </button>
-                        <button onclick="alternarTabelaHistorico('rouparia')" id="btnHistRoupa" class="px-4 py-2 text-xs font-bold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 transition">
-                            Tabela Rouparia
+                <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                    <!-- Seletor de Tabela, Busca Geral e Ações -->
+                    <div class="flex flex-wrap justify-between items-center gap-4">
+                        <div class="flex items-center gap-2">
+                            <button onclick="alternarTabelaHistorico('manutencao')" id="btnHistManut" class="px-4 py-2.5 text-xs font-bold rounded-xl bg-blue-900 text-white shadow-sm transition flex items-center gap-2">
+                                <span>🛠️</span> Base Manutenção
+                            </button>
+                            <button onclick="alternarTabelaHistorico('rouparia')" id="btnHistRoupa" class="px-4 py-2.5 text-xs font-bold rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 transition flex items-center gap-2">
+                                <span>🧺</span> Base Rouparia
+                            </button>
+                        </div>
+
+                        <div class="flex flex-wrap items-center gap-2 flex-1 max-w-lg">
+                            <div class="relative w-full">
+                                <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                                </span>
+                                <input type="text" id="filtroBuscaGeral" oninput="filtrarHistoricoComDebounce()" placeholder="Buscar por código, item, setor, chamado, responsável..." class="w-full pl-9 pr-8 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:bg-white focus:outline-none transition">
+                                <button onclick="limparBuscaTexto()" class="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-slate-600 text-xs">✕</button>
+                            </div>
+                        </div>
+
+                        <button onclick="limparTodosFiltros()" class="px-3.5 py-2 text-xs font-bold text-slate-600 hover:text-rose-600 bg-slate-100 hover:bg-rose-50 border border-slate-200 hover:border-rose-200 rounded-xl transition flex items-center gap-1.5" title="Redefinir todos os filtros aplicados">
+                            <span>🔄</span> Limpar Filtros
                         </button>
                     </div>
 
-                    <div class="flex items-center gap-2">
-                        <input type="text" id="filtroBuscaGeral" oninput="filtrarHistoricoComDebounce()" placeholder="Buscar nos registros..." class="px-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+                    <!-- FILTROS AVANÇADOS: MANUTENÇÃO -->
+                    <div id="painelFiltrosManut" class="pt-3 border-t border-slate-100 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 text-xs">
+                        <div>
+                            <label class="block font-bold text-slate-600 text-[10px] uppercase mb-1">Mês / Ano</label>
+                            <select id="filtroManutMesAno" onchange="carregarHistorico()" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-semibold focus:ring-2 focus:ring-blue-500 cursor-pointer">
+                                <option value="Todos">Todos os Meses</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-600 text-[10px] uppercase mb-1">Turno</label>
+                            <select id="filtroManutTurno" onchange="carregarHistorico()" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-semibold focus:ring-2 focus:ring-blue-500 cursor-pointer">
+                                <option value="Todos">Todos os Turnos</option>
+                                <option value="Matutino">Matutino</option>
+                                <option value="Vespertino">Vespertino</option>
+                                <option value="Noturno">Noturno</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-600 text-[10px] uppercase mb-1">Status / Situação</label>
+                            <select id="filtroManutStatus" onchange="carregarHistorico()" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-semibold focus:ring-2 focus:ring-blue-500 cursor-pointer">
+                                <option value="Todos">Todos os Status</option>
+                                <option value="Pendente">Pendente</option>
+                                <option value="Solicitado">Solicitado</option>
+                                <option value="Ok">Ok</option>
+                                <option value="Concluído">Concluído</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-600 text-[10px] uppercase mb-1">Tipo de Manutenção</label>
+                            <select id="filtroManutTipo" onchange="carregarHistorico()" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-semibold focus:ring-2 focus:ring-blue-500 cursor-pointer">
+                                <option value="Todos">Todos os Tipos</option>
+                                <option value="Corretiva">Corretiva</option>
+                                <option value="Preventiva">Preventiva</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-600 text-[10px] uppercase mb-1">Categoria</label>
+                            <select id="filtroManutCategoria" onchange="carregarHistorico()" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-semibold focus:ring-2 focus:ring-blue-500 cursor-pointer">
+                                <option value="Todas">Todas as Categorias</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-600 text-[10px] uppercase mb-1">Setor / Local</label>
+                            <select id="filtroManutSetor" onchange="carregarHistorico()" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-semibold focus:ring-2 focus:ring-blue-500 cursor-pointer">
+                                <option value="Todos">Todos os Setores</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-600 text-[10px] uppercase mb-1">Retrabalho</label>
+                            <select id="filtroManutRetrabalho" onchange="carregarHistorico()" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-semibold focus:ring-2 focus:ring-blue-500 cursor-pointer">
+                                <option value="Todos">Todos</option>
+                                <option value="Sim">🔄 Apenas Retrabalhos</option>
+                                <option value="Não">Sem Retrabalho</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- FILTROS AVANÇADOS: ROUPARIA -->
+                    <div id="painelFiltrosRoupa" class="pt-3 border-t border-slate-100 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 text-xs hidden">
+                        <div>
+                            <label class="block font-bold text-slate-600 text-[10px] uppercase mb-1">Mês / Ano</label>
+                            <select id="filtroRoupaMesAno" onchange="carregarHistorico()" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-semibold focus:ring-2 focus:ring-blue-500 cursor-pointer">
+                                <option value="Todos">Todos os Meses</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-600 text-[10px] uppercase mb-1">Tipo de Movimentação</label>
+                            <select id="filtroRoupaTipo" onchange="carregarHistorico()" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-semibold focus:ring-2 focus:ring-blue-500 cursor-pointer">
+                                <option value="Todos">Todos os Tipos</option>
+                                <option value="Estoque">Estoque</option>
+                                <option value="Recolhimento Sujo">Recolhimento Sujo</option>
+                                <option value="Entrega aos Setores">Entrega aos Setores</option>
+                                <option value="Devolução">Devolução por Não Conformidade</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-600 text-[10px] uppercase mb-1">Item Enxoval</label>
+                            <select id="filtroRoupaItem" onchange="carregarHistorico()" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-semibold focus:ring-2 focus:ring-blue-500 cursor-pointer">
+                                <option value="Todos">Todos os Itens</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-600 text-[10px] uppercase mb-1">Setor / Local</label>
+                            <select id="filtroRoupaSetor" onchange="carregarHistorico()" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-semibold focus:ring-2 focus:ring-blue-500 cursor-pointer">
+                                <option value="Todos">Todos os Setores</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-600 text-[10px] uppercase mb-1">Turno</label>
+                            <select id="filtroRoupaTurno" onchange="carregarHistorico()" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-semibold focus:ring-2 focus:ring-blue-500 cursor-pointer">
+                                <option value="Todos">Todos os Turnos</option>
+                                <option value="Matutino">Matutino</option>
+                                <option value="Vespertino">Vespertino</option>
+                                <option value="Noturno">Noturno</option>
+                            </select>
+                        </div>
                     </div>
                 </div>
 
@@ -2263,6 +2386,12 @@ def painel_principal():
                     const editItemRoupa = document.getElementById('editRoupaItem');
                     const editSetorRoupa = document.getElementById('editRoupaSetor');
 
+                    // Filtros da Base de Dados (Aba 4)
+                    const fCat = document.getElementById('filtroManutCategoria');
+                    const fSetorManut = document.getElementById('filtroManutSetor');
+                    const fItemRoupa = document.getElementById('filtroRoupaItem');
+                    const fSetorRoupa = document.getElementById('filtroRoupaSetor');
+
                     selCat.innerHTML = '';
                     selItemManut.innerHTML = '';
                     selSetorManut.innerHTML = '';
@@ -2275,11 +2404,17 @@ def painel_principal():
                     if (editItemRoupa) editItemRoupa.innerHTML = '';
                     if (editSetorRoupa) editSetorRoupa.innerHTML = '';
 
+                    if (fCat) fCat.innerHTML = '<option value="Todas">Todas as Categorias</option>';
+                    if (fSetorManut) fSetorManut.innerHTML = '<option value="Todos">Todos os Setores</option>';
+                    if (fItemRoupa) fItemRoupa.innerHTML = '<option value="Todos">Todos os Itens</option>';
+                    if (fSetorRoupa) fSetorRoupa.innerHTML = '<option value="Todos">Todos os Setores</option>';
+
                     itens.forEach(i => {
                         const opt = `<option value="${i.nome}">${i.nome}</option>`;
                         if (i.tipo === 'categoria_manutencao') {
                             selCat.innerHTML += opt;
                             if (editCat) editCat.innerHTML += opt;
+                            if (fCat) fCat.innerHTML += opt;
                         }
                         if (i.tipo === 'item_manutencao') {
                             selItemManut.innerHTML += opt;
@@ -2290,10 +2425,13 @@ def painel_principal():
                             selSetorRoupa.innerHTML += opt;
                             if (editSetorManut) editSetorManut.innerHTML += opt;
                             if (editSetorRoupa) editSetorRoupa.innerHTML += opt;
+                            if (fSetorManut) fSetorManut.innerHTML += opt;
+                            if (fSetorRoupa) fSetorRoupa.innerHTML += opt;
                         }
                         if (i.tipo === 'item_enxoval') {
                             selItemRoupa.innerHTML += opt;
                             if (editItemRoupa) editItemRoupa.innerHTML += opt;
+                            if (fItemRoupa) fItemRoupa.innerHTML += opt;
                         }
                     });
 
@@ -2407,13 +2545,27 @@ def painel_principal():
                     // Preencher Dropdown de Meses se necessário
                     const selMes = document.getElementById('consolidadoFiltroMes');
                     const selRel = document.getElementById('relatorioFiltroMes');
-                    if (selMes.options.length <= 1 && d.meses_disponiveis) {
-                        d.meses_disponiveis.forEach(m => {
-                            const opt = `<option value="${m}">${m}</option>`;
-                            selMes.innerHTML += opt;
-                            selRel.innerHTML += opt;
-                        });
-                        selMes.value = d.mes_ano_selecionado;
+                    const fMesManut = document.getElementById('filtroManutMesAno');
+                    const fMesRoupa = document.getElementById('filtroRoupaMesAno');
+                    if (d.meses_disponiveis) {
+                        if (selMes && selMes.options.length <= 1) {
+                            d.meses_disponiveis.forEach(m => {
+                                const opt = `<option value="${m}">${m}</option>`;
+                                selMes.innerHTML += opt;
+                                if (selRel) selRel.innerHTML += opt;
+                            });
+                            selMes.value = d.mes_ano_selecionado;
+                        }
+                        if (fMesManut && fMesManut.options.length <= 1) {
+                            d.meses_disponiveis.forEach(m => {
+                                fMesManut.innerHTML += `<option value="${m}">${m}</option>`;
+                            });
+                        }
+                        if (fMesRoupa && fMesRoupa.options.length <= 1) {
+                            d.meses_disponiveis.forEach(m => {
+                                fMesRoupa.innerHTML += `<option value="${m}">${m}</option>`;
+                            });
+                        }
                     }
 
                     document.getElementById('consolidadoLabelMes').textContent = `Mês/Ano: ${d.mes_ano_selecionado}`;
@@ -2614,28 +2766,60 @@ def painel_principal():
                 const bRoupa = document.getElementById('btnHistRoupa');
                 const cManut = document.getElementById('containerHistManut');
                 const cRoupa = document.getElementById('containerHistRoupa');
+                const pManut = document.getElementById('painelFiltrosManut');
+                const pRoupa = document.getElementById('painelFiltrosRoupa');
 
                 if (tipo === 'manutencao') {
-                    bManut.className = 'px-4 py-2 text-xs font-bold rounded-lg bg-blue-900 text-white shadow-sm transition';
-                    bRoupa.className = 'px-4 py-2 text-xs font-bold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 transition';
+                    bManut.className = 'px-4 py-2.5 text-xs font-bold rounded-xl bg-blue-900 text-white shadow-sm transition flex items-center gap-2';
+                    bRoupa.className = 'px-4 py-2.5 text-xs font-bold rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 transition flex items-center gap-2';
                     cManut.classList.remove('hidden');
                     cRoupa.classList.add('hidden');
+                    if (pManut) pManut.classList.remove('hidden');
+                    if (pRoupa) pRoupa.classList.add('hidden');
                 } else {
-                    bRoupa.className = 'px-4 py-2 text-xs font-bold rounded-lg bg-blue-900 text-white shadow-sm transition';
-                    bManut.className = 'px-4 py-2 text-xs font-bold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 transition';
+                    bRoupa.className = 'px-4 py-2.5 text-xs font-bold rounded-xl bg-blue-900 text-white shadow-sm transition flex items-center gap-2';
+                    bManut.className = 'px-4 py-2.5 text-xs font-bold rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 transition flex items-center gap-2';
                     cRoupa.classList.remove('hidden');
                     cManut.classList.add('hidden');
+                    if (pManut) pManut.classList.add('hidden');
+                    if (pRoupa) pRoupa.classList.remove('hidden');
                 }
                 carregarHistorico();
             }
 
             // Carregar Histórico
             async function carregarHistorico() {
-                const busca = document.getElementById('filtroBuscaGeral').value.trim();
+                const busca = document.getElementById('filtroBuscaGeral') ? document.getElementById('filtroBuscaGeral').value.trim() : '';
+
+                // Filtros Manutenção
+                const mMesAno = document.getElementById('filtroManutMesAno') ? document.getElementById('filtroManutMesAno').value : 'Todos';
+                const mTurno = document.getElementById('filtroManutTurno') ? document.getElementById('filtroManutTurno').value : 'Todos';
+                const mStatus = document.getElementById('filtroManutStatus') ? document.getElementById('filtroManutStatus').value : 'Todos';
+                const mTipo = document.getElementById('filtroManutTipo') ? document.getElementById('filtroManutTipo').value : 'Todos';
+                const mCategoria = document.getElementById('filtroManutCategoria') ? document.getElementById('filtroManutCategoria').value : 'Todas';
+                const mSetor = document.getElementById('filtroManutSetor') ? document.getElementById('filtroManutSetor').value : 'Todos';
+                const mRetrabalho = document.getElementById('filtroManutRetrabalho') ? document.getElementById('filtroManutRetrabalho').value : 'Todos';
+
+                // Filtros Rouparia
+                const rMesAno = document.getElementById('filtroRoupaMesAno') ? document.getElementById('filtroRoupaMesAno').value : 'Todos';
+                const rTipo = document.getElementById('filtroRoupaTipo') ? document.getElementById('filtroRoupaTipo').value : 'Todos';
+                const rItem = document.getElementById('filtroRoupaItem') ? document.getElementById('filtroRoupaItem').value : 'Todos';
+                const rSetor = document.getElementById('filtroRoupaSetor') ? document.getElementById('filtroRoupaSetor').value : 'Todos';
+                const rTurno = document.getElementById('filtroRoupaTurno') ? document.getElementById('filtroRoupaTurno').value : 'Todos';
                 
                 // Manutenção
                 try {
-                    const resM = await fetch(`/api/manutencao?busca=${encodeURIComponent(busca)}`);
+                    const paramsM = new URLSearchParams();
+                    if (busca) paramsM.append('busca', busca);
+                    if (mMesAno && mMesAno !== 'Todos') paramsM.append('mes_ano', mMesAno);
+                    if (mTurno && mTurno !== 'Todos') paramsM.append('turno', mTurno);
+                    if (mStatus && mStatus !== 'Todos') paramsM.append('status', mStatus);
+                    if (mTipo && mTipo !== 'Todos') paramsM.append('tipo', mTipo);
+                    if (mCategoria && mCategoria !== 'Todas' && mCategoria !== 'Todos') paramsM.append('categoria', mCategoria);
+                    if (mSetor && mSetor !== 'Todos') paramsM.append('setor', mSetor);
+                    if (mRetrabalho && mRetrabalho !== 'Todos') paramsM.append('retrabalho', mRetrabalho);
+
+                    const resM = await fetch(`/api/manutencao?${paramsM.toString()}`);
                     const dadosM = await resM.json();
                     document.getElementById('contadorManut').textContent = `${dadosM.length} registro(s)`;
                     const tbM = document.getElementById('tabelaManutCorpo');
@@ -2671,7 +2855,15 @@ def painel_principal():
 
                 // Rouparia
                 try {
-                    const resR = await fetch(`/api/rouparia?busca=${encodeURIComponent(busca)}`);
+                    const paramsR = new URLSearchParams();
+                    if (busca) paramsR.append('busca', busca);
+                    if (rMesAno && rMesAno !== 'Todos') paramsR.append('mes_ano', rMesAno);
+                    if (rTipo && rTipo !== 'Todos') paramsR.append('tipo_registro', rTipo);
+                    if (rItem && rItem !== 'Todos') paramsR.append('item', rItem);
+                    if (rSetor && rSetor !== 'Todos') paramsR.append('setor', rSetor);
+                    if (rTurno && rTurno !== 'Todos') paramsR.append('turno', rTurno);
+
+                    const resR = await fetch(`/api/rouparia?${paramsR.toString()}`);
                     const dadosR = await resR.json();
                     document.getElementById('contadorRoupa').textContent = `${dadosR.length} registro(s)`;
                     const tbR = document.getElementById('tabelaRoupaCorpo');
@@ -2707,6 +2899,34 @@ def painel_principal():
             function filtrarHistoricoComDebounce() {
                 clearTimeout(debounceTimer);
                 debounceTimer = setTimeout(carregarHistorico, 300);
+            }
+
+            function limparBuscaTexto() {
+                const el = document.getElementById('filtroBuscaGeral');
+                if (el) el.value = '';
+                carregarHistorico();
+            }
+
+            function limparTodosFiltros() {
+                const elBusca = document.getElementById('filtroBuscaGeral');
+                if (elBusca) elBusca.value = '';
+
+                const selIds = [
+                    'filtroManutMesAno', 'filtroManutTurno', 'filtroManutStatus', 'filtroManutTipo',
+                    'filtroManutCategoria', 'filtroManutSetor', 'filtroManutRetrabalho',
+                    'filtroRoupaMesAno', 'filtroRoupaTipo', 'filtroRoupaItem',
+                    'filtroRoupaSetor', 'filtroRoupaTurno'
+                ];
+
+                selIds.forEach(id => {
+                    const sel = document.getElementById(id);
+                    if (sel) {
+                        sel.selectedIndex = 0;
+                    }
+                });
+
+                carregarHistorico();
+                mostrarToast('Filtros redefinidos com sucesso!', 'sucesso');
             }
 
             async function excluirManutencao(id) {
