@@ -252,20 +252,37 @@ def fazer_login(dados: LoginRequest, db: Session = Depends(get_db)):
         }
     }
 
+def normalizar_data(data_str: str) -> str:
+    if not data_str:
+        return datetime.now().strftime("%d/%m/%Y")
+    data_str = data_str.strip()
+    if "-" in data_str:
+        partes = data_str.split("-")
+        if len(partes) == 3:
+            return f"{partes[2]}/{partes[1]}/{partes[0]}"
+    return data_str
+
+def extrair_mes_ano(data_str: str) -> str:
+    if not data_str:
+        return datetime.now().strftime("%m/%Y")
+    data_str = data_str.strip()
+    if "/" in data_str:
+        p = data_str.split("/")
+        if len(p) >= 3:
+            return f"{p[1]}/{p[2]}"
+    elif "-" in data_str:
+        p = data_str.split("-")
+        if len(p) >= 3:
+            return f"{p[1]}/{p[0]}"
+    return datetime.now().strftime("%m/%Y")
+
 # --- MANUTENÇÃO ---
 @app.post("/api/manutencao")
 def criar_manutencao(dados: ManutencaoCreate, db: Session = Depends(get_db)):
-    agora = datetime.now()
-    data_str = dados.data if dados.data else agora.strftime("%d/%m/%Y")
-    
-    # Extrair Mês/Ano
-    try:
-        partes = data_str.split("/")
-        mes_ano_str = f"{partes[1]}/{partes[2]}"
-    except Exception:
-        mes_ano_str = agora.strftime("%m/%Y")
-        
-    horario_str = dados.horario if dados.horario else agora.strftime("%H:%M")
+    data_str = normalizar_data(dados.data)
+    mes_ano_str = extrair_mes_ano(dados.data)
+    horario_str = dados.horario if dados.horario else datetime.now().strftime("%H:%M")
+    data_conc_str = normalizar_data(dados.data_conclusao) if dados.data_conclusao else ""
     
     # Gerar Código ID automático (ex: PRED-0021, CLIM-0022, etc.)
     prefixo = "MANUT"
@@ -357,12 +374,8 @@ def atualizar_manutencao(id: int, dados: ManutencaoUpdate, db: Session = Depends
     if not reg:
         raise HTTPException(status_code=404, detail="Registro não encontrado")
     
-    reg.data = dados.data
-    try:
-        p = dados.data.split("/")
-        reg.mes_ano = f"{p[1]}/{p[2]}"
-    except Exception:
-        pass
+    reg.data = normalizar_data(dados.data)
+    reg.mes_ano = extrair_mes_ano(dados.data)
     reg.horario = dados.horario
     reg.turno = dados.turno
     reg.categoria = dados.categoria
@@ -375,7 +388,7 @@ def atualizar_manutencao(id: int, dados: ManutencaoUpdate, db: Session = Depends
     reg.responsavel_entrega = dados.responsavel_entrega
     reg.responsavel_recebimento = dados.responsavel_recebimento
     reg.status = dados.status
-    reg.data_conclusao = dados.data_conclusao
+    reg.data_conclusao = normalizar_data(dados.data_conclusao) if dados.data_conclusao else ""
     reg.observacoes = dados.observacoes
     reg.retrabalho = dados.retrabalho
     db.commit()
@@ -406,14 +419,9 @@ def excluir_manutencao(id: int, db: Session = Depends(get_db)):
 # --- ROUPARIA ---
 @app.post("/api/rouparia")
 def criar_rouparia(dados: RoupariaCreate, db: Session = Depends(get_db)):
-    agora = datetime.now()
-    data_str = dados.data if dados.data else agora.strftime("%d/%m/%Y")
-    try:
-        partes = data_str.split("/")
-        mes_ano_str = f"{partes[1]}/{partes[2]}"
-    except Exception:
-        mes_ano_str = agora.strftime("%m/%Y")
-    horario_str = dados.horario if dados.horario else agora.strftime("%H:%M")
+    data_str = normalizar_data(dados.data)
+    mes_ano_str = extrair_mes_ano(dados.data)
+    horario_str = dados.horario if dados.horario else datetime.now().strftime("%H:%M")
     
     proximo_num = db.query(Rouparia).count() + 1
     codigo_gerado = f"R-{proximo_num}"
@@ -483,12 +491,8 @@ def atualizar_rouparia(id: int, dados: RoupariaUpdate, db: Session = Depends(get
     if not reg:
         raise HTTPException(status_code=404, detail="Registro não encontrado")
         
-    reg.data = dados.data
-    try:
-        p = dados.data.split("/")
-        reg.mes_ano = f"{p[1]}/{p[2]}"
-    except Exception:
-        pass
+    reg.data = normalizar_data(dados.data)
+    reg.mes_ano = extrair_mes_ano(dados.data)
     reg.horario = dados.horario
     reg.turno = dados.turno
     reg.tipo_registro = dados.tipo_registro
@@ -1319,11 +1323,16 @@ def painel_principal():
                         <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
                             <div>
                                 <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Data *</label>
-                                <input type="text" id="manutData" placeholder="DD/MM/AAAA" class="w-full text-xs border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500" required>
+                                <input type="date" id="manutData" onclick="this.showPicker()" class="w-full text-xs border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 cursor-pointer bg-white" required>
                             </div>
                             <div>
                                 <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Horário</label>
-                                <input type="text" id="manutHorario" placeholder="Ex: 08:30" class="w-full text-xs border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500">
+                                <div class="flex gap-1.5">
+                                    <input type="time" id="manutHorario" class="w-full text-xs border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500">
+                                    <button type="button" onclick="preencherHoraAtual('manutHorario')" class="px-3 py-2 bg-blue-100 hover:bg-blue-200 text-blue-900 border border-blue-300 font-bold text-xs rounded-lg transition whitespace-nowrap shadow-sm active:scale-95 flex items-center gap-1" title="Preencher com a hora atual">
+                                        ⏰ Agora
+                                    </button>
+                                </div>
                             </div>
                             <div>
                                 <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Turno *</label>
@@ -1405,7 +1414,7 @@ def painel_principal():
                             </div>
                             <div>
                                 <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Data Conclusão / Retorno</label>
-                                <input type="text" id="manutDataConclusao" placeholder="DD/MM/AAAA (se concluído)" class="w-full text-xs border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500">
+                                <input type="date" id="manutDataConclusao" onclick="this.showPicker()" class="w-full text-xs border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 cursor-pointer bg-white">
                             </div>
                         </div>
 
@@ -1435,11 +1444,16 @@ def painel_principal():
                         <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
                             <div>
                                 <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Data *</label>
-                                <input type="text" id="roupaData" placeholder="DD/MM/AAAA" class="w-full text-xs border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500" required>
+                                <input type="date" id="roupaData" onclick="this.showPicker()" class="w-full text-xs border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 cursor-pointer bg-white" required>
                             </div>
                             <div>
                                 <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Horário</label>
-                                <input type="text" id="roupaHorario" placeholder="Ex: 14:00" class="w-full text-xs border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500">
+                                <div class="flex gap-1.5">
+                                    <input type="time" id="roupaHorario" class="w-full text-xs border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500">
+                                    <button type="button" onclick="preencherHoraAtual('roupaHorario')" class="px-3 py-2 bg-blue-100 hover:bg-blue-200 text-blue-900 border border-blue-300 font-bold text-xs rounded-lg transition whitespace-nowrap shadow-sm active:scale-95 flex items-center gap-1" title="Preencher com a hora atual">
+                                        ⏰ Agora
+                                    </button>
+                                </div>
                             </div>
                             <div>
                                 <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Turno *</label>
@@ -1933,11 +1947,16 @@ def painel_principal():
                     <div class="grid grid-cols-3 gap-3">
                         <div>
                             <label class="block font-bold text-slate-700 uppercase mb-1">Data *</label>
-                            <input type="text" id="editManutData" class="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500" required>
+                            <input type="date" id="editManutData" onclick="this.showPicker()" class="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 cursor-pointer bg-white" required>
                         </div>
                         <div>
                             <label class="block font-bold text-slate-700 uppercase mb-1">Horário</label>
-                            <input type="text" id="editManutHorario" class="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500">
+                            <div class="flex gap-1.5">
+                                <input type="time" id="editManutHorario" class="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500">
+                                <button type="button" onclick="preencherHoraAtual('editManutHorario')" class="px-2.5 py-2 bg-blue-100 hover:bg-blue-200 text-blue-900 border border-blue-300 font-bold text-xs rounded-lg transition whitespace-nowrap shadow-sm active:scale-95 flex items-center gap-1" title="Preencher com a hora atual">
+                                    ⏰ Agora
+                                </button>
+                            </div>
                         </div>
                         <div>
                             <label class="block font-bold text-slate-700 uppercase mb-1">Turno</label>
@@ -2007,7 +2026,7 @@ def painel_principal():
                         </div>
                         <div>
                             <label class="block font-bold text-slate-700 uppercase mb-1">Data Conclusão / Retorno</label>
-                            <input type="text" id="editManutDataConclusao" placeholder="DD/MM/AAAA" class="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500">
+                            <input type="date" id="editManutDataConclusao" onclick="this.showPicker()" class="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 cursor-pointer bg-white">
                         </div>
                     </div>
                     <div>
@@ -2046,11 +2065,16 @@ def painel_principal():
                     <div class="grid grid-cols-3 gap-3">
                         <div>
                             <label class="block font-bold text-slate-700 uppercase mb-1">Data *</label>
-                            <input type="text" id="editRoupaData" class="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500" required>
+                            <input type="date" id="editRoupaData" onclick="this.showPicker()" class="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 cursor-pointer bg-white" required>
                         </div>
                         <div>
                             <label class="block font-bold text-slate-700 uppercase mb-1">Horário</label>
-                            <input type="text" id="editRoupaHorario" class="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500">
+                            <div class="flex gap-1.5">
+                                <input type="time" id="editRoupaHorario" class="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500">
+                                <button type="button" onclick="preencherHoraAtual('editRoupaHorario')" class="px-2.5 py-2 bg-blue-100 hover:bg-blue-200 text-blue-900 border border-blue-300 font-bold text-xs rounded-lg transition whitespace-nowrap shadow-sm active:scale-95 flex items-center gap-1" title="Preencher com a hora atual">
+                                    ⏰ Agora
+                                </button>
+                            </div>
                         </div>
                         <div>
                             <label class="block font-bold text-slate-700 uppercase mb-1">Turno</label>
@@ -2125,6 +2149,50 @@ def painel_principal():
             let debounceTimer = null;
             let chartStatusInstance = null;
             let chartCategoriaInstance = null;
+
+            // Funções de formatação e preenchimento de Data e Horário
+            function formatarDataIsoHoje() {
+                const d = new Date();
+                const ano = d.getFullYear();
+                const mes = String(d.getMonth() + 1).padStart(2, '0');
+                const dia = String(d.getDate()).padStart(2, '0');
+                return `${ano}-${mes}-${dia}`;
+            }
+
+            function obterHoraAtual() {
+                const d = new Date();
+                const h = String(d.getHours()).padStart(2, '0');
+                const m = String(d.getMinutes()).padStart(2, '0');
+                return `${h}:${m}`;
+            }
+
+            function preencherHoraAtual(inputId) {
+                const el = document.getElementById(inputId);
+                if (el) {
+                    el.value = obterHoraAtual();
+                    mostrarToast(`Horário atual definido: ${el.value}`);
+                }
+            }
+
+            function dataParaIso(dStr) {
+                if (!dStr) return '';
+                if (dStr.includes('-')) return dStr.split('T')[0];
+                const p = dStr.split('/');
+                if (p.length === 3) {
+                    return `${p[2]}-${p[1].padStart(2, '0')}-${p[0].padStart(2, '0')}`;
+                }
+                return dStr;
+            }
+
+            function dataParaBr(dStr) {
+                if (!dStr) return '';
+                if (dStr.includes('/')) return dStr;
+                const p = dStr.split('-');
+                if (p.length === 3) {
+                    return `${p[2]}/${p[1]}/${p[0]}`;
+                }
+                return dStr;
+            }
 
             // Toast
             function mostrarToast(msg, tipo = 'sucesso') {
@@ -2229,14 +2297,13 @@ def painel_principal():
                         }
                     });
 
-                    // Setar data de hoje nos inputs
-                    const hoje = new Date();
-                    const dStr = String(hoje.getDate()).padStart(2, '0') + '/' + String(hoje.getMonth() + 1).padStart(2, '0') + '/' + hoje.getFullYear();
-                    const hStr = String(hoje.getHours()).padStart(2, '0') + ':' + String(hoje.getMinutes()).padStart(2, '0');
-                    document.getElementById('manutData').value = dStr;
-                    document.getElementById('manutHorario').value = hStr;
-                    document.getElementById('roupaData').value = dStr;
-                    document.getElementById('roupaHorario').value = hStr;
+                    // Setar data de hoje nos inputs com calendário e horário atual
+                    const hojeIso = formatarDataIsoHoje();
+                    const horaAtual = obterHoraAtual();
+                    document.getElementById('manutData').value = hojeIso;
+                    document.getElementById('manutHorario').value = horaAtual;
+                    document.getElementById('roupaData').value = hojeIso;
+                    document.getElementById('roupaHorario').value = horaAtual;
 
                 } catch (e) {
                     console.error('Erro ao carregar dropdowns:', e);
@@ -2250,7 +2317,7 @@ def painel_principal():
                 btn.disabled = true;
 
                 const payload = {
-                    data: document.getElementById('manutData').value.trim(),
+                    data: dataParaBr(document.getElementById('manutData').value.trim()),
                     horario: document.getElementById('manutHorario').value.trim(),
                     turno: document.getElementById('manutTurno').value,
                     categoria: document.getElementById('manutCategoria').value,
@@ -2263,7 +2330,7 @@ def painel_principal():
                     responsavel_entrega: document.getElementById('manutRespEntrega').value.trim(),
                     responsavel_recebimento: document.getElementById('manutRespRecebimento').value.trim(),
                     status: document.getElementById('manutStatus').value,
-                    data_conclusao: document.getElementById('manutDataConclusao').value.trim(),
+                    data_conclusao: dataParaBr(document.getElementById('manutDataConclusao').value.trim()),
                     observacoes: document.getElementById('manutObservacoes').value.trim(),
                     retrabalho: document.getElementById('manutRetrabalho').checked ? 1 : 0
                 };
@@ -2296,7 +2363,7 @@ def painel_principal():
                 btn.disabled = true;
 
                 const payload = {
-                    data: document.getElementById('roupaData').value.trim(),
+                    data: dataParaBr(document.getElementById('roupaData').value.trim()),
                     horario: document.getElementById('roupaHorario').value.trim(),
                     turno: document.getElementById('roupaTurno').value,
                     tipo_registro: document.getElementById('roupaTipo').value,
@@ -2575,13 +2642,14 @@ def painel_principal():
                     tbM.innerHTML = '';
                     dadosM.forEach(r => {
                         let badgeCor = r.status === 'Concluído' ? 'bg-emerald-100 text-emerald-800' : r.status === 'Ok' ? 'bg-sky-100 text-sky-800' : 'bg-amber-100 text-amber-800';
+                        let badgeRetrabalho = r.retrabalho ? `<span class="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-extrabold bg-amber-100 text-amber-900 border border-amber-300" title="Identificado como Retrabalho">🔄 Retrabalho</span>` : '';
                         tbM.innerHTML += `
                             <tr class="hover:bg-slate-50 transition">
                                 <td class="p-3 text-center font-bold text-slate-500">${r.codigo_id || r.id}</td>
                                 <td class="p-3 whitespace-nowrap">${r.data}</td>
                                 <td class="p-3">${r.turno}</td>
                                 <td class="p-3">${r.categoria}</td>
-                                <td class="p-3 font-semibold">${r.tipo_manutencao}</td>
+                                <td class="p-3 font-semibold">${r.tipo_manutencao}${badgeRetrabalho}</td>
                                 <td class="p-3 font-bold text-slate-900">${r.item}</td>
                                 <td class="p-3">${r.setor}</td>
                                 <td class="p-3 font-bold text-center">${r.quantidade}</td>
@@ -2820,7 +2888,7 @@ def painel_principal():
                     
                     document.getElementById('editManutId').value = reg.id;
                     document.getElementById('editManutCodigo').textContent = reg.codigo_id || `#${reg.id}`;
-                    document.getElementById('editManutData').value = reg.data || '';
+                    document.getElementById('editManutData').value = dataParaIso(reg.data || '');
                     document.getElementById('editManutHorario').value = reg.horario || '';
                     document.getElementById('editManutTurno').value = reg.turno || 'Matutino';
                     document.getElementById('editManutCategoria').value = reg.categoria || '';
@@ -2833,7 +2901,7 @@ def painel_principal():
                     document.getElementById('editManutRespEntrega').value = reg.responsavel_entrega || '';
                     document.getElementById('editManutRespRecebimento').value = reg.responsavel_recebimento || '';
                     document.getElementById('editManutStatus').value = reg.status || 'Pendente';
-                    document.getElementById('editManutDataConclusao').value = reg.data_conclusao || '';
+                    document.getElementById('editManutDataConclusao').value = dataParaIso(reg.data_conclusao || '');
                     document.getElementById('editManutObservacoes').value = reg.observacoes || '';
                     document.getElementById('editManutRetrabalho').checked = !!reg.retrabalho;
 
@@ -2854,7 +2922,7 @@ def painel_principal():
                 btn.disabled = true;
 
                 const payload = {
-                    data: document.getElementById('editManutData').value.trim(),
+                    data: dataParaBr(document.getElementById('editManutData').value.trim()),
                     horario: document.getElementById('editManutHorario').value.trim(),
                     turno: document.getElementById('editManutTurno').value,
                     categoria: document.getElementById('editManutCategoria').value,
@@ -2867,7 +2935,7 @@ def painel_principal():
                     responsavel_entrega: document.getElementById('editManutRespEntrega').value.trim(),
                     responsavel_recebimento: document.getElementById('editManutRespRecebimento').value.trim(),
                     status: document.getElementById('editManutStatus').value,
-                    data_conclusao: document.getElementById('editManutDataConclusao').value.trim(),
+                    data_conclusao: dataParaBr(document.getElementById('editManutDataConclusao').value.trim()),
                     observacoes: document.getElementById('editManutObservacoes').value.trim(),
                     retrabalho: document.getElementById('editManutRetrabalho').checked ? 1 : 0
                 };
@@ -2903,7 +2971,7 @@ def painel_principal():
 
                     document.getElementById('editRoupaId').value = reg.id;
                     document.getElementById('editRoupaCodigo').textContent = reg.codigo_id || `#${reg.id}`;
-                    document.getElementById('editRoupaData').value = reg.data || '';
+                    document.getElementById('editRoupaData').value = dataParaIso(reg.data || '');
                     document.getElementById('editRoupaHorario').value = reg.horario || '';
                     document.getElementById('editRoupaTurno').value = reg.turno || 'Matutino';
                     document.getElementById('editRoupaTipo').value = reg.tipo_registro || 'Estoque';
@@ -2932,7 +3000,7 @@ def painel_principal():
                 btn.disabled = true;
 
                 const payload = {
-                    data: document.getElementById('editRoupaData').value.trim(),
+                    data: dataParaBr(document.getElementById('editRoupaData').value.trim()),
                     horario: document.getElementById('editRoupaHorario').value.trim(),
                     turno: document.getElementById('editRoupaTurno').value,
                     tipo_registro: document.getElementById('editRoupaTipo').value,
