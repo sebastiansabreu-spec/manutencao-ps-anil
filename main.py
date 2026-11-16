@@ -398,10 +398,18 @@ def atualizar_manutencao(id: int, dados: ManutencaoUpdate, db: Session = Depends
     reg.responsavel_recebimento = dados.responsavel_recebimento
     reg.status = dados.status
     reg.data_conclusao = normalizar_data(dados.data_conclusao) if dados.data_conclusao else ""
-    reg.observacoes = dados.observacoes
+    
+    # Acrescenta observação/nota de auditoria quando o item é editado
+    obs_informada = (dados.observacoes or "").strip()
+    agora_txt = datetime.now().strftime("%d/%m/%Y às %H:%M")
+    if "[Editado em" not in obs_informada:
+        reg.observacoes = f"{obs_informada}\n[Editado em {agora_txt}]".strip()
+    else:
+        reg.observacoes = obs_informada
+        
     reg.retrabalho = dados.retrabalho
     db.commit()
-    return {"status": "sucesso", "mensagem": f"Chamado {reg.codigo_id} atualizado com sucesso!"}
+    return {"status": "sucesso", "mensagem": f"Chamado {reg.codigo_id} atualizado com sucesso!", "observacoes": reg.observacoes}
 
 @app.patch("/api/manutencao/{id}/status")
 def atualizar_status_manutencao(id: int, dados: StatusUpdate, db: Session = Depends(get_db)):
@@ -515,7 +523,15 @@ def atualizar_rouparia(id: int, dados: RoupariaUpdate, db: Session = Depends(get
     reg.peso_kg = dados.peso_kg
     reg.responsavel_unidade = dados.responsavel_unidade
     reg.responsavel_terceirizada = dados.responsavel_terceirizada
-    reg.inconformidade = dados.inconformidade
+    
+    # Acrescenta observação/nota de auditoria quando o item é editado
+    inconf_informada = (dados.inconformidade or "").strip()
+    agora_txt = datetime.now().strftime("%d/%m/%Y às %H:%M")
+    if "[Editado em" not in inconf_informada:
+        reg.inconformidade = f"{inconf_informada}\n[Editado em {agora_txt}]".strip()
+    else:
+        reg.inconformidade = inconf_informada
+        
     db.commit()
     return {"status": "sucesso", "mensagem": f"Movimentação {reg.codigo_id} atualizada com sucesso!"}
 
@@ -2053,6 +2069,184 @@ def painel_principal():
         </main>
         </div><!-- Fim de telaSistema -->
 
+        <!-- MODAL: VISUALIZAR DETALHES DE MANUTENÇÃO -->
+        <div id="modalVisualizarManutencao" class="fixed inset-0 z-50 hidden overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+            <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-2xl w-full overflow-hidden">
+                <div class="px-6 py-4 bg-gradient-to-r from-slate-900 to-blue-900 text-white flex justify-between items-center">
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-lg">📋</span>
+                            <h3 class="text-base font-bold">Ficha de Detalhes do Chamado</h3>
+                            <span id="viewManutCodigo" class="bg-blue-600 px-2.5 py-0.5 rounded-full text-xs font-black tracking-wider">#</span>
+                        </div>
+                        <p class="text-xs text-blue-200 mt-0.5" id="viewManutCategoriaSub">Manutenção</p>
+                    </div>
+                    <button onclick="fecharModalVisualizarManut()" class="text-white/70 hover:text-white transition text-lg p-1">✕</button>
+                </div>
+                
+                <div class="p-6 space-y-4 max-h-[80vh] overflow-y-auto text-xs">
+                    <!-- Badges de Status e Retrabalho -->
+                    <div class="flex flex-wrap items-center justify-between gap-2 p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                        <div class="flex items-center gap-2">
+                            <span class="font-bold text-slate-500 uppercase text-[10px]">Status:</span>
+                            <span id="viewManutStatusBadge" class="px-2.5 py-1 rounded-full text-xs font-black bg-blue-100 text-blue-900">Pendente</span>
+                        </div>
+                        <div id="viewManutBadgesExtras" class="flex items-center gap-2">
+                            <!-- Retrabalho e Editado badges inseridos via JS -->
+                        </div>
+                    </div>
+
+                    <!-- Grid de Informações -->
+                    <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                        <div class="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                            <span class="block text-[10px] font-bold text-slate-400 uppercase">Data & Horário</span>
+                            <span id="viewManutDataHora" class="font-bold text-slate-800 text-xs">-</span>
+                        </div>
+                        <div class="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                            <span class="block text-[10px] font-bold text-slate-400 uppercase">Turno</span>
+                            <span id="viewManutTurno" class="font-bold text-slate-800 text-xs">-</span>
+                        </div>
+                        <div class="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                            <span class="block text-[10px] font-bold text-slate-400 uppercase">Tipo de Manutenção</span>
+                            <span id="viewManutTipo" class="font-bold text-slate-800 text-xs">-</span>
+                        </div>
+                        <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 sm:col-span-2">
+                            <span class="block text-[10px] font-bold text-slate-400 uppercase">Item / Equipamento</span>
+                            <span id="viewManutItem" class="font-bold text-blue-900 text-xs">-</span>
+                        </div>
+                        <div class="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                            <span class="block text-[10px] font-bold text-slate-400 uppercase">Setor / Local</span>
+                            <span id="viewManutSetor" class="font-bold text-slate-800 text-xs">-</span>
+                        </div>
+                        <div class="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                            <span class="block text-[10px] font-bold text-slate-400 uppercase">Quantidade</span>
+                            <span id="viewManutQuantidade" class="font-bold text-slate-800 text-xs">-</span>
+                        </div>
+                        <div class="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                            <span class="block text-[10px] font-bold text-slate-400 uppercase">Nº Chamado / Pedido</span>
+                            <span id="viewManutChamado" class="font-bold text-blue-900 text-xs">-</span>
+                        </div>
+                        <div class="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                            <span class="block text-[10px] font-bold text-slate-400 uppercase">Conclusão / Retorno</span>
+                            <span id="viewManutConclusao" class="font-bold text-emerald-800 text-xs">-</span>
+                        </div>
+                        <div class="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                            <span class="block text-[10px] font-bold text-slate-400 uppercase">Resp. Entrega / Vistoria</span>
+                            <span id="viewManutRespEntrega" class="font-semibold text-slate-700">-</span>
+                        </div>
+                        <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 sm:col-span-2">
+                            <span class="block text-[10px] font-bold text-slate-400 uppercase">Resp. Recebimento / Acompanhamento</span>
+                            <span id="viewManutRespRecebimento" class="font-semibold text-slate-700">-</span>
+                        </div>
+                    </div>
+
+                    <!-- Descrição / Especificação -->
+                    <div class="bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+                        <span class="block text-[10px] font-bold text-slate-500 uppercase mb-1">Descrição / Especificação do Serviço</span>
+                        <p id="viewManutDescricao" class="text-slate-800 text-xs font-medium whitespace-pre-line leading-relaxed">-</p>
+                    </div>
+
+                    <!-- Observações Gerais / Histórico de Edições -->
+                    <div class="bg-blue-50/50 p-3.5 rounded-xl border border-blue-100">
+                        <span class="block text-[10px] font-bold text-blue-900 uppercase mb-1 flex items-center gap-1.5">
+                            <span>📝</span> Observações Gerais & Histórico
+                        </span>
+                        <div id="viewManutObservacoes" class="text-slate-700 text-xs whitespace-pre-line leading-relaxed font-normal">-</div>
+                    </div>
+                </div>
+
+                <div class="p-4 bg-slate-50 border-t border-slate-200 flex justify-between items-center">
+                    <span class="text-[11px] text-slate-400 font-medium" id="viewManutRodapeRef">Registro no Banco de Dados</span>
+                    <div class="flex gap-2">
+                        <button type="button" onclick="fecharModalVisualizarManut()" class="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold rounded-xl transition">Fechar</button>
+                        <button type="button" id="btnEditarFromViewManut" class="px-4 py-2 bg-blue-900 hover:bg-blue-800 text-white font-bold rounded-xl shadow-sm transition flex items-center gap-1.5">
+                            <span>✏️</span> Editar Chamado
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- MODAL: VISUALIZAR DETALHES DE ROUPARIA -->
+        <div id="modalVisualizarRouparia" class="fixed inset-0 z-50 hidden overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+            <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-2xl w-full overflow-hidden">
+                <div class="px-6 py-4 bg-gradient-to-r from-slate-900 to-indigo-900 text-white flex justify-between items-center">
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-lg">🧺</span>
+                            <h3 class="text-base font-bold">Detalhes da Movimentação de Rouparia</h3>
+                            <span id="viewRoupaCodigo" class="bg-indigo-600 px-2.5 py-0.5 rounded-full text-xs font-black tracking-wider">#</span>
+                        </div>
+                        <p class="text-xs text-indigo-200 mt-0.5" id="viewRoupaTipoSub">Movimentação</p>
+                    </div>
+                    <button onclick="fecharModalVisualizarRoupa()" class="text-white/70 hover:text-white transition text-lg p-1">✕</button>
+                </div>
+                
+                <div class="p-6 space-y-4 max-h-[80vh] overflow-y-auto text-xs">
+                    <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                        <div class="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                            <span class="block text-[10px] font-bold text-slate-400 uppercase">Data & Horário</span>
+                            <span id="viewRoupaDataHora" class="font-bold text-slate-800 text-xs">-</span>
+                        </div>
+                        <div class="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                            <span class="block text-[10px] font-bold text-slate-400 uppercase">Turno</span>
+                            <span id="viewRoupaTurno" class="font-bold text-slate-800 text-xs">-</span>
+                        </div>
+                        <div class="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                            <span class="block text-[10px] font-bold text-slate-400 uppercase">Tipo Movimentação</span>
+                            <span id="viewRoupaTipoMov" class="font-bold text-blue-900 text-xs">-</span>
+                        </div>
+                        <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 sm:col-span-2">
+                            <span class="block text-[10px] font-bold text-slate-400 uppercase">Item do Enxoval</span>
+                            <span id="viewRoupaItem" class="font-bold text-slate-900 text-xs">-</span>
+                        </div>
+                        <div class="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                            <span class="block text-[10px] font-bold text-slate-400 uppercase">Setor / Local</span>
+                            <span id="viewRoupaSetor" class="font-bold text-slate-800 text-xs">-</span>
+                        </div>
+                        <div class="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                            <span class="block text-[10px] font-bold text-slate-400 uppercase">Quantidade de Peças</span>
+                            <span id="viewRoupaQtd" class="font-bold text-slate-800 text-xs">-</span>
+                        </div>
+                        <div class="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                            <span class="block text-[10px] font-bold text-slate-400 uppercase">Peso (kg)</span>
+                            <span id="viewRoupaPeso" class="font-bold text-slate-800 text-xs">-</span>
+                        </div>
+                        <div class="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                            <span class="block text-[10px] font-bold text-slate-400 uppercase">Pontualidade</span>
+                            <span id="viewRoupaPontual" class="font-bold text-emerald-800 text-xs">-</span>
+                        </div>
+                        <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 sm:col-span-1">
+                            <span class="block text-[10px] font-bold text-slate-400 uppercase">Resp. Unidade</span>
+                            <span id="viewRoupaRespUnidade" class="font-semibold text-slate-700">-</span>
+                        </div>
+                        <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 sm:col-span-2">
+                            <span class="block text-[10px] font-bold text-slate-400 uppercase">Resp. Terceirizada</span>
+                            <span id="viewRoupaRespTerceirizada" class="font-semibold text-slate-700">-</span>
+                        </div>
+                    </div>
+
+                    <!-- Inconformidade / Ocorrência / Observações -->
+                    <div class="bg-amber-50/60 p-3.5 rounded-xl border border-amber-200">
+                        <span class="block text-[10px] font-bold text-amber-900 uppercase mb-1 flex items-center gap-1.5">
+                            <span>⚠️</span> Inconformidade / Ocorrências & Histórico
+                        </span>
+                        <div id="viewRoupaInconformidade" class="text-slate-800 text-xs whitespace-pre-line leading-relaxed font-medium">-</div>
+                    </div>
+                </div>
+
+                <div class="p-4 bg-slate-50 border-t border-slate-200 flex justify-between items-center">
+                    <span class="text-[11px] text-slate-400 font-medium">Registro de Rouparia</span>
+                    <div class="flex gap-2">
+                        <button type="button" onclick="fecharModalVisualizarRoupa()" class="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold rounded-xl transition">Fechar</button>
+                        <button type="button" id="btnEditarFromViewRoupa" class="px-4 py-2 bg-blue-900 hover:bg-blue-800 text-white font-bold rounded-xl shadow-sm transition flex items-center gap-1.5">
+                            <span>✏️</span> Editar Movimentação
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- MODAL: EDITAR MANUTENÇÃO -->
         <div id="modalEditarManutencao" class="fixed inset-0 z-50 hidden overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
             <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-2xl w-full overflow-hidden">
@@ -2827,19 +3021,23 @@ def painel_principal():
                     dadosM.forEach(r => {
                         let badgeCor = r.status === 'Concluído' ? 'bg-emerald-100 text-emerald-800' : r.status === 'Ok' ? 'bg-sky-100 text-sky-800' : 'bg-amber-100 text-amber-800';
                         let badgeRetrabalho = r.retrabalho ? `<span class="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-extrabold bg-amber-100 text-amber-900 border border-amber-300" title="Identificado como Retrabalho">🔄 Retrabalho</span>` : '';
+                        let badgeEditado = (r.observacoes && r.observacoes.includes('[Editado em')) ? `<span class="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200" title="Item com alteração registrada">✏️ Editado</span>` : '';
                         tbM.innerHTML += `
                             <tr class="hover:bg-slate-50 transition">
                                 <td class="p-3 text-center font-bold text-slate-500">${r.codigo_id || r.id}</td>
                                 <td class="p-3 whitespace-nowrap">${r.data}</td>
                                 <td class="p-3">${r.turno}</td>
                                 <td class="p-3">${r.categoria}</td>
-                                <td class="p-3 font-semibold">${r.tipo_manutencao}${badgeRetrabalho}</td>
+                                <td class="p-3 font-semibold">${r.tipo_manutencao}${badgeRetrabalho}${badgeEditado}</td>
                                 <td class="p-3 font-bold text-slate-900">${r.item}</td>
                                 <td class="p-3">${r.setor}</td>
                                 <td class="p-3 font-bold text-center">${r.quantidade}</td>
                                 <td class="p-3 text-center"><span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${badgeCor}">${r.status}</span></td>
                                 <td class="p-3 text-center">
                                     <div class="flex items-center justify-center gap-1.5">
+                                        <button onclick="abrirModalVisualizarManut(${r.id})" class="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition" title="Visualizar todos os detalhes deste chamado">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
+                                        </button>
                                         <button onclick="abrirModalEditarManut(${r.id})" class="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition" title="Editar este chamado">
                                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
                                         </button>
@@ -2869,12 +3067,13 @@ def painel_principal():
                     const tbR = document.getElementById('tabelaRoupaCorpo');
                     tbR.innerHTML = '';
                     dadosR.forEach(r => {
+                        let badgeEditadoR = (r.inconformidade && r.inconformidade.includes('[Editado em')) ? `<span class="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200" title="Item com alteração registrada">✏️ Editado</span>` : '';
                         tbR.innerHTML += `
                             <tr class="hover:bg-slate-50 transition">
                                 <td class="p-3 text-center font-bold text-slate-500">${r.codigo_id || r.id}</td>
                                 <td class="p-3 whitespace-nowrap">${r.data}</td>
                                 <td class="p-3">${r.turno}</td>
-                                <td class="p-3 font-semibold text-blue-900">${r.tipo_registro}</td>
+                                <td class="p-3 font-semibold text-blue-900">${r.tipo_registro}${badgeEditadoR}</td>
                                 <td class="p-3 font-bold text-slate-900">${r.item_enxoval}</td>
                                 <td class="p-3">${r.setor}</td>
                                 <td class="p-3 font-bold text-center">${r.qtd_pecas}</td>
@@ -2882,6 +3081,9 @@ def painel_principal():
                                 <td class="p-3">${r.responsavel_unidade || '-'}</td>
                                 <td class="p-3 text-center">
                                     <div class="flex items-center justify-center gap-1.5">
+                                        <button onclick="abrirModalVisualizarRoupa(${r.id})" class="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition" title="Visualizar todos os detalhes desta movimentação">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
+                                        </button>
                                         <button onclick="abrirModalEditarRoupa(${r.id})" class="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition" title="Editar esta movimentação">
                                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
                                         </button>
@@ -3098,6 +3300,101 @@ def painel_principal():
             }
 
             // ===============================================================
+            // VISUALIZAÇÃO DE DETALHES DE REGISTROS (MODAIS)
+            // ===============================================================
+            async function abrirModalVisualizarManut(id) {
+                try {
+                    const res = await fetch(`/api/manutencao/${id}`);
+                    if (!res.ok) throw new Error('Não encontrado');
+                    const reg = await res.json();
+
+                    document.getElementById('viewManutCodigo').textContent = reg.codigo_id || `#${reg.id}`;
+                    document.getElementById('viewManutCategoriaSub').textContent = `${reg.categoria} • ${reg.tipo_manutencao}`;
+                    document.getElementById('viewManutDataHora').textContent = `${reg.data} ${reg.horario ? 'às ' + reg.horario : ''}`;
+                    document.getElementById('viewManutTurno').textContent = reg.turno || '-';
+                    document.getElementById('viewManutTipo').textContent = reg.tipo_manutencao || '-';
+                    document.getElementById('viewManutItem').textContent = reg.item || '-';
+                    document.getElementById('viewManutSetor').textContent = reg.setor || '-';
+                    document.getElementById('viewManutQuantidade').textContent = reg.quantidade || 1;
+                    document.getElementById('viewManutChamado').textContent = reg.numero_chamado || 'Sem chamado';
+                    document.getElementById('viewManutConclusao').textContent = reg.data_conclusao || 'Em aberto';
+                    document.getElementById('viewManutRespEntrega').textContent = reg.responsavel_entrega || '-';
+                    document.getElementById('viewManutRespRecebimento').textContent = reg.responsavel_recebimento || '-';
+                    document.getElementById('viewManutDescricao').textContent = reg.descricao || 'Nenhuma descrição detalhada informada.';
+                    document.getElementById('viewManutObservacoes').textContent = reg.observacoes || 'Nenhuma observação registrada.';
+                    document.getElementById('viewManutRodapeRef').textContent = `Mês de Referência: ${reg.mes_ano || '-'}`;
+
+                    // Badge de Status
+                    const badgeSt = document.getElementById('viewManutStatusBadge');
+                    badgeSt.textContent = reg.status || 'Pendente';
+                    badgeSt.className = reg.status === 'Concluído' ? 'px-2.5 py-1 rounded-full text-xs font-black bg-emerald-100 text-emerald-800' :
+                                        reg.status === 'Ok' ? 'px-2.5 py-1 rounded-full text-xs font-black bg-sky-100 text-sky-800' :
+                                        'px-2.5 py-1 rounded-full text-xs font-black bg-amber-100 text-amber-800';
+
+                    // Badges Extras (Retrabalho e Editado)
+                    const extras = document.getElementById('viewManutBadgesExtras');
+                    extras.innerHTML = '';
+                    if (reg.retrabalho) {
+                        extras.innerHTML += `<span class="px-2.5 py-1 rounded-full text-xs font-extrabold bg-amber-100 text-amber-900 border border-amber-300">🔄 Retrabalho</span>`;
+                    }
+                    if (reg.observacoes && reg.observacoes.includes('[Editado em')) {
+                        extras.innerHTML += `<span class="px-2.5 py-1 rounded-full text-xs font-bold bg-indigo-100 text-indigo-900 border border-indigo-200">✏️ Histórico de Edição</span>`;
+                    }
+
+                    // Botão Editar a partir da visualização
+                    const btnEd = document.getElementById('btnEditarFromViewManut');
+                    btnEd.onclick = () => {
+                        fecharModalVisualizarManut();
+                        abrirModalEditarManut(id);
+                    };
+
+                    document.getElementById('modalVisualizarManutencao').classList.remove('hidden');
+                } catch(e) {
+                    mostrarToast('Erro ao carregar detalhes do chamado.', 'erro');
+                }
+            }
+
+            function fecharModalVisualizarManut() {
+                document.getElementById('modalVisualizarManutencao').classList.add('hidden');
+            }
+
+            async function abrirModalVisualizarRoupa(id) {
+                try {
+                    const res = await fetch(`/api/rouparia/${id}`);
+                    if (!res.ok) throw new Error('Não encontrado');
+                    const reg = await res.json();
+
+                    document.getElementById('viewRoupaCodigo').textContent = reg.codigo_id || `#${reg.id}`;
+                    document.getElementById('viewRoupaTipoSub').textContent = `Módulo Rouparia • ${reg.tipo_registro}`;
+                    document.getElementById('viewRoupaDataHora').textContent = `${reg.data} ${reg.horario ? 'às ' + reg.horario : ''}`;
+                    document.getElementById('viewRoupaTurno').textContent = reg.turno || '-';
+                    document.getElementById('viewRoupaTipoMov').textContent = reg.tipo_registro || '-';
+                    document.getElementById('viewRoupaItem').textContent = reg.item_enxoval || '-';
+                    document.getElementById('viewRoupaSetor').textContent = reg.setor || '-';
+                    document.getElementById('viewRoupaQtd').textContent = `${reg.qtd_pecas || 0} peça(s)`;
+                    document.getElementById('viewRoupaPeso').textContent = reg.peso_kg > 0 ? `${reg.peso_kg.toFixed(2)} kg` : '-';
+                    document.getElementById('viewRoupaPontual').textContent = reg.pontual === 1 ? 'Sim' : reg.pontual === 0 ? 'Não' : '-';
+                    document.getElementById('viewRoupaRespUnidade').textContent = reg.responsavel_unidade || '-';
+                    document.getElementById('viewRoupaRespTerceirizada').textContent = reg.responsavel_terceirizada || '-';
+                    document.getElementById('viewRoupaInconformidade').textContent = reg.inconformidade || 'Nenhuma inconformidade ou observação registrada.';
+
+                    const btnEdR = document.getElementById('btnEditarFromViewRoupa');
+                    btnEdR.onclick = () => {
+                        fecharModalVisualizarRoupa();
+                        abrirModalEditarRoupa(id);
+                    };
+
+                    document.getElementById('modalVisualizarRouparia').classList.remove('hidden');
+                } catch(e) {
+                    mostrarToast('Erro ao carregar detalhes da rouparia.', 'erro');
+                }
+            }
+
+            function fecharModalVisualizarRoupa() {
+                document.getElementById('modalVisualizarRouparia').classList.add('hidden');
+            }
+
+            // ===============================================================
             // EDIÇÃO DE REGISTROS DO BANCO DE DADOS (MODAIS)
             // ===============================================================
             async function abrirModalEditarManut(id) {
@@ -3141,6 +3438,23 @@ def painel_principal():
                 const btn = document.getElementById('btnSalvarEditManut');
                 btn.disabled = true;
 
+                // Recuperar usuário logado para auditoria
+                let nomeOperador = 'Gestão';
+                try {
+                    const u = JSON.parse(localStorage.getItem('usuario_ps_anil') || '{}');
+                    nomeOperador = u.nome || u.username || 'Gestão';
+                } catch(err) {}
+
+                const agoraAudit = `${new Date().toLocaleDateString('pt-BR')} às ${obterHoraAtual()}`;
+                const notaAuditoria = `[Editado em ${agoraAudit} por ${nomeOperador}]`;
+
+                let obsForm = document.getElementById('editManutObservacoes').value.trim();
+                if (obsForm && !obsForm.includes(notaAuditoria)) {
+                    obsForm = `${obsForm}\n${notaAuditoria}`;
+                } else if (!obsForm) {
+                    obsForm = notaAuditoria;
+                }
+
                 const payload = {
                     data: dataParaBr(document.getElementById('editManutData').value.trim()),
                     horario: document.getElementById('editManutHorario').value.trim(),
@@ -3156,7 +3470,7 @@ def painel_principal():
                     responsavel_recebimento: document.getElementById('editManutRespRecebimento').value.trim(),
                     status: document.getElementById('editManutStatus').value,
                     data_conclusao: dataParaBr(document.getElementById('editManutDataConclusao').value.trim()),
-                    observacoes: document.getElementById('editManutObservacoes').value.trim(),
+                    observacoes: obsForm,
                     retrabalho: document.getElementById('editManutRetrabalho').checked ? 1 : 0
                 };
 
@@ -3167,7 +3481,7 @@ def painel_principal():
                         body: JSON.stringify(payload)
                     });
                     if (res.ok) {
-                        mostrarToast('Registro de manutenção atualizado com sucesso no banco!');
+                        mostrarToast('Registro atualizado com sucesso e observação registrada!');
                         fecharModalEditarManut();
                         carregarHistorico();
                         carregarConsolidado();
@@ -3219,6 +3533,22 @@ def painel_principal():
                 const btn = document.getElementById('btnSalvarEditRoupa');
                 btn.disabled = true;
 
+                let nomeOperador = 'Gestão';
+                try {
+                    const u = JSON.parse(localStorage.getItem('usuario_ps_anil') || '{}');
+                    nomeOperador = u.nome || u.username || 'Gestão';
+                } catch(err) {}
+
+                const agoraAudit = `${new Date().toLocaleDateString('pt-BR')} às ${obterHoraAtual()}`;
+                const notaAuditoria = `[Editado em ${agoraAudit} por ${nomeOperador}]`;
+
+                let inconfForm = document.getElementById('editRoupaInconformidade').value.trim();
+                if (inconfForm && !inconfForm.includes(notaAuditoria)) {
+                    inconfForm = `${inconfForm}\n${notaAuditoria}`;
+                } else if (!inconfForm) {
+                    inconfForm = notaAuditoria;
+                }
+
                 const payload = {
                     data: dataParaBr(document.getElementById('editRoupaData').value.trim()),
                     horario: document.getElementById('editRoupaHorario').value.trim(),
@@ -3230,7 +3560,7 @@ def painel_principal():
                     peso_kg: parseFloat(document.getElementById('editRoupaPesoKg').value) || 0.0,
                     responsavel_unidade: document.getElementById('editRoupaRespUnidade').value.trim(),
                     responsavel_terceirizada: document.getElementById('editRoupaRespTerceirizada').value.trim(),
-                    inconformidade: document.getElementById('editRoupaInconformidade').value.trim()
+                    inconformidade: inconfForm
                 };
 
                 try {
