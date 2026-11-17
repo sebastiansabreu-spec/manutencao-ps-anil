@@ -3846,37 +3846,18 @@ def painel_principal():
 
                 const doc = frame.contentWindow.document;
                 doc.open();
-                doc.write(`
-                    <!DOCTYPE html>
-                    <html lang="pt-BR">
-                    <head>
-                        <meta charset="utf-8">
-                        <title>${titulo || 'Documento Oficial - SEMUS / PS ANIL'}</title>
-                        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css">
-                        <style>
-                            @page { size: A4; margin: 12mm 10mm; }
-                            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; background: #fff; color: #0f172a; font-size: 11px; line-height: 1.3; }
-                            table { width: 100%; border-collapse: collapse; }
-                            th, td { border: 1px solid #cbd5e1; padding: 4px 6px; }
-                            .no-print { display: none !important; }
-                            @media print {
-                                body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
-                            }
-                        </style>
-                    </head>
-                    <body class="p-2">
-                        ${conteudoHtml}
-                        <script>
-                            window.onload = function() {
-                                window.focus();
-                                window.print();
-                                setTimeout(() => { window.frameElement.remove(); }, 2000);
-                            };
-                        </script>
-                    </body>
-                    </html>
-                `);
+                doc.write('<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8">' +
+                    '<title>' + (titulo || 'Documento Oficial - SEMUS / PS ANIL') + '</title>' +
+                    '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css">' +
+                    '<style>@page { size: A4; margin: 12mm 10mm; } body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; background: #fff; color: #0f172a; font-size: 11px; line-height: 1.3; } table { width: 100%; border-collapse: collapse; } th, td { border: 1px solid #cbd5e1; padding: 4px 6px; } .no-print { display: none !important; } @media print { body { print-color-adjust: exact; -webkit-print-color-adjust: exact; } }</style>' +
+                    '</head><body class="p-2">' + conteudoHtml + '</body></html>');
                 doc.close();
+
+                setTimeout(() => {
+                    frame.contentWindow.focus();
+                    frame.contentWindow.print();
+                    setTimeout(() => { frame.remove(); }, 2000);
+                }, 500);
             }
 
             // Imprimir o Relatório ou Documento Ativo na tela
