@@ -244,7 +244,9 @@ app = FastAPI(title="SaaS Gestão de Manutenção & Rouparia - PS Anil", version
 def inicializar_usuarios_padrao():
     db = SessionLocal()
     try:
-        if db.query(Usuario).count() == 0:
+        # Garantir admin com senha anil2026
+        admin = db.query(Usuario).filter(func.lower(Usuario.username) == "admin").first()
+        if not admin:
             admin = Usuario(
                 username="admin",
                 nome="Administrador PS Anil",
@@ -252,15 +254,27 @@ def inicializar_usuarios_padrao():
                 perfil="admin",
                 ativo=1
             )
-            operador = Usuario(
+            db.add(admin)
+        else:
+            admin.senha_hash = gerar_hash_senha("anil2026")
+            admin.ativo = 1
+
+        # Garantir plantao com senha psanil
+        plantao = db.query(Usuario).filter(func.lower(Usuario.username) == "plantao").first()
+        if not plantao:
+            plantao = Usuario(
                 username="plantao",
                 nome="Plantão PS Anil",
                 senha_hash=gerar_hash_senha("psanil"),
                 perfil="operador",
                 ativo=1
             )
-            db.add_all([admin, operador])
-            db.commit()
+            db.add(plantao)
+        else:
+            plantao.senha_hash = gerar_hash_senha("psanil")
+            plantao.ativo = 1
+
+        db.commit()
     except Exception as e:
         print(f"Erro ao inicializar usuários padrão: {e}")
     finally:
@@ -269,8 +283,10 @@ def inicializar_usuarios_padrao():
 # --- AUTENTICAÇÃO / LOGIN ---
 @app.post("/api/login")
 def fazer_login(dados: LoginRequest, db: Session = Depends(get_db)):
-    u = db.query(Usuario).filter(Usuario.username == dados.username.strip(), Usuario.ativo == 1).first()
-    if not u or u.senha_hash != gerar_hash_senha(dados.password.strip()):
+    user_input = dados.username.strip().lower()
+    senha_input = dados.password.strip()
+    u = db.query(Usuario).filter(func.lower(Usuario.username) == user_input, Usuario.ativo == 1).first()
+    if not u or u.senha_hash != gerar_hash_senha(senha_input):
         raise HTTPException(status_code=401, detail="Usuário ou senha incorretos.")
     return {
         "status": "sucesso",
@@ -1426,7 +1442,7 @@ def painel_principal():
                             <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
                             </span>
-                            <input type="text" id="loginUsuario" required placeholder="Digite seu usuário..." class="w-full pl-10 pr-4 py-2.5 text-sm bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 focus:bg-white focus:outline-none transition">
+                            <input type="text" id="loginUsuario" required placeholder="Digite seu usuário (ex: admin)..." autocapitalize="none" autocorrect="off" spellcheck="false" class="w-full pl-10 pr-4 py-2.5 text-sm bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 focus:bg-white focus:outline-none transition font-medium">
                         </div>
                     </div>
 
@@ -1436,7 +1452,10 @@ def painel_principal():
                             <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
                             </span>
-                            <input type="password" id="loginSenha" required placeholder="••••••••" class="w-full pl-10 pr-4 py-2.5 text-sm bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 focus:bg-white focus:outline-none transition">
+                            <input type="password" id="loginSenha" required placeholder="••••••••" class="w-full pl-10 pr-10 py-2.5 text-sm bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 focus:bg-white focus:outline-none transition">
+                            <button type="button" onclick="alternarVerSenha()" class="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600 text-xs" title="Ver / Ocultar Senha">
+                                👁️
+                            </button>
                         </div>
                     </div>
 
@@ -1444,14 +1463,23 @@ def painel_principal():
                         <span>⚠️</span> <span id="loginErroMsg">Usuário ou senha incorretos.</span>
                     </div>
 
-                    <button type="submit" id="btnLogin" class="w-full py-3 bg-blue-900 hover:bg-blue-800 text-white font-black text-sm rounded-xl shadow-lg shadow-blue-900/30 transition flex items-center justify-center gap-2">
+                    <button type="submit" id="btnLogin" class="w-full py-3 bg-blue-900 hover:bg-blue-800 text-white font-black text-sm rounded-xl shadow-lg shadow-blue-900/30 transition flex items-center justify-center gap-2 active:scale-95">
                         <span>🔐</span> Entrar no Sistema
                     </button>
 
-                    <div class="p-3.5 bg-blue-50 border border-blue-200 rounded-xl text-center">
-                        <p class="text-[11px] text-blue-950 font-bold">Credenciais de Acesso:</p>
-                        <p class="text-[11px] text-blue-800 mt-0.5">Admin: <span class="font-mono font-bold">admin</span> | Senha: <span class="font-mono font-bold">anil2026</span></p>
-                        <p class="text-[11px] text-blue-800">Plantão: <span class="font-mono font-bold">plantao</span> | Senha: <span class="font-mono font-bold">psanil</span></p>
+                    <div class="p-3.5 bg-blue-50 border border-blue-200 rounded-xl space-y-2 text-center">
+                        <div>
+                            <p class="text-[11px] text-blue-950 font-bold uppercase tracking-wider">Acesso Rápido com 1 Clique:</p>
+                        </div>
+                        <div class="flex gap-2">
+                            <button type="button" onclick="preencherLogin('admin', 'anil2026')" class="flex-1 py-1.5 px-2 bg-blue-900 hover:bg-blue-800 text-white font-bold text-xs rounded-lg transition shadow-sm active:scale-95">
+                                👤 Admin
+                            </button>
+                            <button type="button" onclick="preencherLogin('plantao', 'psanil')" class="flex-1 py-1.5 px-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-lg transition shadow-sm active:scale-95">
+                                👨‍⚕️ Plantão
+                            </button>
+                        </div>
+                        <p class="text-[10px] text-slate-500">Admin: admin / anil2026 • Plantão: plantao / psanil</p>
                     </div>
                 </form>
             </div>
@@ -4368,6 +4396,19 @@ def painel_principal():
                     telaLogin.classList.remove('hidden');
                     telaSistema.classList.add('hidden');
                 }
+            }
+
+            function preencherLogin(u, p) {
+                document.getElementById('loginUsuario').value = u;
+                document.getElementById('loginSenha').value = p;
+                const err = document.getElementById('loginErro');
+                if (err) err.classList.add('hidden');
+                document.getElementById('btnLogin').focus();
+            }
+
+            function alternarVerSenha() {
+                const inp = document.getElementById('loginSenha');
+                if (inp) inp.type = inp.type === 'password' ? 'text' : 'password';
             }
 
             async function executarLogin(e) {
