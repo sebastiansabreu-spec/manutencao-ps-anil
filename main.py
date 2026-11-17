@@ -790,6 +790,173 @@ def obter_relatorio_manutencao(mes_ano: str = Query("Todos"), db: Session = Depe
     }
 
 # ==============================================================================
+# 5.1 DOCUMENTOS OFICIAIS DE ROUPARIA (RELATÓRIO DIÁRIO, ENXOVAL ENTREGUE, PESO SUJO)
+# ==============================================================================
+@app.get("/api/relatorios/rouparia/documentos")
+def obter_documentos_rouparia(data: str = Query("01/08/2026"), db: Session = Depends(get_db)):
+    # 1. Obter itens de enxoval padrão
+    itens_db = db.query(ConfiguracaoItem).filter(ConfiguracaoItem.tipo == "item_enxoval", ConfiguracaoItem.ativo == 1).order_by(ConfiguracaoItem.id.asc()).all()
+    itens_padrao = [
+        "Lençol Paciente", "Lençol de Maca", "Travessa", "Calça Privativa", "Camisa Privativa",
+        "Roupa Privativa (Kit)", "Capote", "Campo Simples P (40x40)", "Campo Simples P (50x50)",
+        "Campo Simples M (80x80)", "Campo Simples G (1,20x1,20)", "Campo Duplo P (50x50)",
+        "Campo Duplo M (80x80)", "Campo Duplo G (1,20x1,20)", "Campo Fenestrado P",
+        "Campo Fenestrado M (80x80)", "Campo Fenestrado G (1,20x1,20)", "Campo Fenestrado G (1,60x1,60)",
+        "Saco Hamper", "Pano de Biombo"
+    ]
+    itens_nomes = [i.nome for i in itens_db if i.nome and not i.nome.startswith("Relatório")] if itens_db else itens_padrao
+    for p in itens_padrao:
+        if not any(p.lower() == x.lower() for x in itens_nomes):
+            itens_nomes.append(p)
+
+    # 2. Datas disponíveis na base de Rouparia
+    datas_brutas = db.query(Rouparia.data).distinct().all()
+    datas_disponiveis = [r[0] for r in datas_brutas if r[0] and "/" in r[0]]
+    def parse_data_br(d_str):
+        try:
+            pts = d_str.split("/")
+            return (int(pts[2]), int(pts[1]), int(pts[0]))
+        except:
+            return (0, 0, 0)
+    datas_disponiveis = sorted(list(set(datas_disponiveis)), key=parse_data_br, reverse=True)
+    if not datas_disponiveis:
+        datas_disponiveis = ["01/08/2026"]
+
+    data_consulta = data if (data and data in datas_disponiveis) else datas_disponiveis[0]
+
+    # 3. Registros do dia selecionado
+    registros_dia = db.query(Rouparia).filter(Rouparia.data == data_consulta).all()
+
+    # 4. Cálculo do Estoque Global (Saldo acumulado: recebidos/estoque menos entregas)
+    todos_registros = db.query(Rouparia).all()
+    estoque_map = {it: 0 for it in itens_nomes}
+    for r in todos_registros:
+        it = (r.item_enxoval or "").strip()
+        if not it:
+            continue
+        it_key = next((x for x in itens_nomes if x.lower() == it.lower()), it)
+        if it_key not in estoque_map:
+            estoque_map[it_key] = 0
+        tipo = (r.tipo_registro or "").strip().lower()
+        if tipo in ["recebido lavanderia", "estoque", "recebimento"]:
+            estoque_map[it_key] += int(r.qtd_pecas or 0)
+        elif tipo in ["entrega aos setores", "entrega setor"]:
+            estoque_map[it_key] -= int(r.qtd_pecas or 0)
+
+    # 5. Documento 1: Relatório Diário
+    recebidos_dia = {it: 0 for it in itens_nomes}
+    for r in registros_dia:
+        tipo = (r.tipo_registro or "").strip().lower()
+        if tipo in ["recebido lavanderia", "recebimento"]:
+            it = (r.item_enxoval or "").strip()
+            it_key = next((x for x in itens_nomes if x.lower() == it.lower()), it)
+            recebidos_dia[it_key] = recebidos_dia.get(it_key, 0) + int(r.qtd_pecas or 0)
+
+    # Intercorrências por Setor no dia
+    intercorrencias_setor = {}
+    for r in registros_dia:
+        if r.inconformidade and r.inconformidade.strip():
+            st = r.setor or "Geral"
+            if st not in intercorrencias_setor:
+                intercorrencias_setor[st] = []
+            intercorrencias_setor[st].append({
+                "item": r.item_enxoval or "-",
+                "inconformidade": r.inconformidade,
+                "qtd": r.qtd_pecas or 0
+            })
+
+    # Distribuição Total de Roupas por Setor no dia
+    distribuicao_dia = []
+    for r in registros_dia:
+        tipo = (r.tipo_registro or "").strip().lower()
+        if tipo in ["entrega aos setores", "entrega setor"]:
+            distribuicao_dia.append({
+                "setor": r.setor or "-",
+                "item": r.item_enxoval or "-",
+                "qtd": int(r.qtd_pecas or 0)
+            })
+
+    # Recolhimento Interno
+    recolhimento_interno_dia = []
+    for r in registros_dia:
+        tipo = (r.tipo_registro or "").strip().lower()
+        if tipo == "recolhimento interno":
+            recolhimento_interno_dia.append({
+                "setor": r.setor or "-",
+                "peso_kg": float(r.peso_kg or 0.0)
+            })
+
+    devolucao_inconf_kg = sum(float(r.peso_kg or 0.0) for r in registros_dia if (r.tipo_registro or "").strip().lower() == "devolução inconformidade")
+    recolhimento_sujo_kg = sum(float(r.peso_kg or 0.0) for r in registros_dia if (r.tipo_registro or "").strip().lower() == "recolhimento sujo")
+    ocorrencias_turno = [r.inconformidade for r in registros_dia if r.inconformidade and r.inconformidade.strip()]
+
+    # 6. Documento 2: Planilha de Enxoval Entregue nas Áreas (Doc 01)
+    entregas_areas = {}
+    for r in registros_dia:
+        tipo = (r.tipo_registro or "").strip().lower()
+        if tipo in ["entrega aos setores", "entrega setor"]:
+            st = r.setor or "Setor"
+            if st not in entregas_areas:
+                entregas_areas[st] = {
+                    "setor": st,
+                    "horario": r.horario or "",
+                    "responsavel_recebimento": r.responsavel_unidade or "",
+                    "itens": {it: 0 for it in itens_nomes}
+                }
+            it = (r.item_enxoval or "").strip()
+            it_key = next((x for x in itens_nomes if x.lower() == it.lower()), it)
+            entregas_areas[st]["itens"][it_key] = entregas_areas[st]["itens"].get(it_key, 0) + int(r.qtd_pecas or 0)
+
+    # 7. Documento 3: Planilha de Peso do Enxoval Sujo (Doc 02)
+    q_sujo = db.query(Rouparia).filter(Rouparia.tipo_registro.ilike("%Recolhimento Sujo%"))
+    regs_sujo = q_sujo.filter(Rouparia.data == data_consulta).order_by(Rouparia.id.asc()).all()
+    if not regs_sujo and "/" in data_consulta:
+        p = data_consulta.split("/")
+        mes_ano_ref = f"{p[1]}/{p[2]}"
+        regs_sujo = q_sujo.filter(Rouparia.mes_ano == mes_ano_ref).order_by(Rouparia.id.asc()).all()
+    if not regs_sujo:
+        regs_sujo = q_sujo.order_by(Rouparia.id.asc()).limit(30).all()
+
+    lista_sujo = []
+    tot_h = 0.0
+    tot_p = 0.0
+    for idx, r in enumerate(regs_sujo, 1):
+        qh = float(r.qtd_hamper or 0.0)
+        pk = float(r.peso_kg or 0.0)
+        tot_h += qh
+        tot_p += pk
+        lista_sujo.append({
+            "ord": idx,
+            "data": r.data,
+            "qtd_hamper": qh,
+            "peso_kg": round(pk, 2),
+            "resp_entrega": r.responsavel_unidade or "SEMUS / PS ANIL",
+            "resp_recebimento": r.responsavel_terceirizada or "LAVARE"
+        })
+
+    return {
+        "data_selecionada": data_consulta,
+        "datas_disponiveis": datas_disponiveis,
+        "itens_nomes": itens_nomes,
+        "relatorio_diario": {
+            "recebidos": recebidos_dia,
+            "estoque": estoque_map,
+            "intercorrencias": intercorrencias_setor,
+            "distribuicao": distribuicao_dia,
+            "recolhimento_interno": recolhimento_interno_dia,
+            "devolucao_inconf_kg": round(devolucao_inconf_kg, 2),
+            "recolhimento_sujo_kg": round(recolhimento_sujo_kg, 2),
+            "ocorrencias": ocorrencias_turno
+        },
+        "enxoval_entregue": list(entregas_areas.values()),
+        "peso_sujo": {
+            "registros": lista_sujo,
+            "total_hampers": round(tot_h, 2),
+            "total_peso_kg": round(tot_p, 2)
+        }
+    }
+
+# ==============================================================================
 # 6. EXPORTAÇÕES EXCEL E CSV (MANUTENÇÃO, ROUPARIA E CONSOLIDADO)
 # ==============================================================================
 @app.get("/api/exportar/manutencao/excel")
@@ -1704,101 +1871,421 @@ def painel_principal():
             </section>
 
             <!-- =============================================================== -->
-            <!-- ABA 3: RELATÓRIOS & GRÁFICOS (IMAGEM 4)                         -->
+            <!-- ABA 3: RELATÓRIOS & DOCUMENTOS OFICIAIS                          -->
             <!-- =============================================================== -->
             <section id="aba-relatorios" class="space-y-6 hidden">
-                <!-- Cabeçalho do Relatório -->
+                <!-- Barra Superior de Navegação das Sub-Abas e Ações -->
                 <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-wrap justify-between items-center gap-4">
-                    <div>
-                        <h2 class="text-base font-extrabold text-slate-900">Relatório de Manutenções e Insumos</h2>
-                        <p class="text-xs text-slate-500">Distribuição por Status, Categoria, Setor e Matriz Cruzada de Itens</p>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <button onclick="alternarSubRelatorio('manutencao')" id="btnSubRelManut" class="px-3.5 py-2 text-xs font-bold rounded-xl bg-blue-900 text-white shadow-sm transition flex items-center gap-1.5">
+                            <span>📈</span> Indicadores de Manutenção
+                        </button>
+                        <button onclick="alternarSubRelatorio('rouparia_diario')" id="btnSubRelDiario" class="px-3.5 py-2 text-xs font-bold rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 transition flex items-center gap-1.5">
+                            <span>📋</span> Relatório Diário de Rouparia
+                        </button>
+                        <button onclick="alternarSubRelatorio('rouparia_enxoval')" id="btnSubRelEnxoval" class="px-3.5 py-2 text-xs font-bold rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 transition flex items-center gap-1.5">
+                            <span>📦</span> Enxoval Entregue nas Áreas (Doc 01)
+                        </button>
+                        <button onclick="alternarSubRelatorio('rouparia_peso')" id="btnSubRelPeso" class="px-3.5 py-2 text-xs font-bold rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 transition flex items-center gap-1.5">
+                            <span>⚖️</span> Peso do Enxoval Sujo (Doc 02)
+                        </button>
                     </div>
-                    <div class="flex items-center gap-2">
-                        <select id="relatorioFiltroMes" onchange="carregarRelatorios()" class="text-xs font-bold text-slate-800 bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-blue-500">
-                            <option value="Todos">Todos os Mêses</option>
-                            <!-- Dinâmico -->
-                        </select>
-                    </div>
-                </div>
 
-                <!-- LINHA 1: STATUS & CATEGORIAS (GRÁFICOS E TABELAS) -->
-                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    <!-- Status / Situação -->
-                    <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-                        <h3 class="text-xs font-extrabold text-slate-700 uppercase tracking-wider border-b pb-2">Status / Situação das Manutenções</h3>
-                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
-                            <div class="h-56">
-                                <canvas id="chartStatus"></canvas>
-                            </div>
-                            <div class="overflow-hidden border border-slate-200 rounded-xl">
-                                <table class="w-full text-xs text-left">
-                                    <thead class="bg-slate-50 text-slate-700 font-bold border-b">
-                                        <tr>
-                                            <th class="p-2.5">Status / Situação</th>
-                                            <th class="p-2.5 text-right">Qtd</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="tabelaRelatorioStatus" class="divide-y divide-slate-100">
-                                        <!-- Dinâmico -->
-                                    </tbody>
-                                </table>
-                            </div>
+                    <!-- Controles de Filtro e Impressão -->
+                    <div class="flex items-center gap-3">
+                        <!-- Filtro de Mês (Manutenção) -->
+                        <div id="wrapperFiltroMesManut" class="flex items-center gap-1.5 text-xs">
+                            <span class="text-slate-500 font-bold uppercase text-[10px]">Mês:</span>
+                            <select id="relatorioFiltroMes" onchange="carregarRelatorios()" class="text-xs font-bold text-slate-800 bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-blue-500 cursor-pointer">
+                                <option value="Todos">Todos os Mêses</option>
+                            </select>
                         </div>
-                    </div>
 
-                    <!-- Manutenções por Categoria -->
-                    <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-                        <h3 class="text-xs font-extrabold text-slate-700 uppercase tracking-wider border-b pb-2">Manutenções por Categoria</h3>
-                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
-                            <div class="h-56">
-                                <canvas id="chartCategoria"></canvas>
-                            </div>
-                            <div class="overflow-y-auto max-h-56 border border-slate-200 rounded-xl">
-                                <table class="w-full text-xs text-left">
-                                    <thead class="bg-slate-50 text-slate-700 font-bold border-b sticky top-0">
-                                        <tr>
-                                            <th class="p-2.5">Categoria</th>
-                                            <th class="p-2.5 text-right">Qtd</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="tabelaRelatorioCategoria" class="divide-y divide-slate-100">
-                                        <!-- Dinâmico -->
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- LINHA 2: RANKING POR SETOR / LOCAL -->
-                <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-                    <h3 class="text-xs font-extrabold text-slate-700 uppercase tracking-wider border-b pb-2">Solicitações por Setor / Local (Ranking de Demandas)</h3>
-                    <div class="overflow-x-auto">
-                        <table class="w-full text-xs text-left">
-                            <thead class="bg-slate-50 text-slate-700 font-bold border-b">
-                                <tr>
-                                    <th class="p-2.5">Setor / Local</th>
-                                    <th class="p-2.5 text-right">Qtd Solicitações</th>
-                                    <th class="p-2.5 text-left">Representatividade Visual</th>
-                                </tr>
-                            </thead>
-                            <tbody id="tabelaRelatorioSetores" class="divide-y divide-slate-100">
+                        <!-- Filtro de Data (Rouparia) -->
+                        <div id="wrapperFiltroDataRouparia" class="hidden flex items-center gap-1.5 text-xs">
+                            <span class="text-slate-500 font-bold uppercase text-[10px]">Data:</span>
+                            <select id="relatorioFiltroDataRoupa" onchange="carregarDocumentosRouparia()" class="text-xs font-bold text-slate-800 bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-blue-500 cursor-pointer">
                                 <!-- Dinâmico -->
-                            </tbody>
-                        </table>
+                            </select>
+                        </div>
+
+                        <!-- Botão de Impressão Oficial -->
+                        <button onclick="imprimirRelatorioAtivo()" class="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs rounded-xl shadow-sm transition flex items-center gap-1.5 active:scale-95" title="Imprimir documento em formato oficial A4">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+                            <span>Imprimir Relatório</span>
+                        </button>
                     </div>
                 </div>
 
-                <!-- LINHA 3: MATRIZ CRUZADA SETOR X SUB-CATEGORIA / ITEM (IDÊNTICO À IMAGEM 4) -->
-                <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-                    <div class="flex justify-between items-center border-b pb-2">
-                        <h3 class="text-xs font-extrabold text-slate-700 uppercase tracking-wider">Matriz Cruzada: Setor / Local × Sub-Categoria / Item</h3>
-                        <span class="text-[11px] text-slate-500 font-medium">Contagem de peças e ocorrências por setor</span>
+                <!-- SUB-VISÃO 1: INDICADORES DE MANUTENÇÃO (GRÁFICOS, RANKING E MATRIZ) -->
+                <div id="subview-rel-manut" class="space-y-6">
+                    <!-- Cabeçalho do Relatório de Manutenção -->
+                    <div class="bg-slate-50 p-3.5 rounded-xl border border-slate-200 flex justify-between items-center text-xs">
+                        <div>
+                            <span class="font-extrabold text-slate-800 text-sm block">Relatório de Manutenções e Insumos</span>
+                            <span class="text-slate-500 text-[11px]">Distribuição por Status, Categoria, Setor e Matriz Cruzada de Itens</span>
+                        </div>
+                        <span class="px-2.5 py-1 bg-blue-100 text-blue-900 font-bold rounded-lg text-xs" id="badgeTotalChamadosRel">-</span>
                     </div>
-                    <div class="overflow-x-auto border border-slate-200 rounded-xl">
-                        <table id="tabelaMatrizCruzada" class="w-full text-xs text-left border-collapse">
-                            <!-- Gerado dinamicamente -->
-                        </table>
+
+                    <!-- LINHA 1: STATUS & CATEGORIAS (GRÁFICOS E TABELAS) -->
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <!-- Status / Situação -->
+                        <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                            <h3 class="text-xs font-extrabold text-slate-700 uppercase tracking-wider border-b pb-2">Status / Situação das Manutenções</h3>
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
+                                <div class="h-56">
+                                    <canvas id="chartStatus"></canvas>
+                                </div>
+                                <div class="overflow-hidden border border-slate-200 rounded-xl">
+                                    <table class="w-full text-xs text-left">
+                                        <thead class="bg-slate-50 text-slate-700 font-bold border-b">
+                                            <tr>
+                                                <th class="p-2.5">Status / Situação</th>
+                                                <th class="p-2.5 text-right">Qtd</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="tabelaRelatorioStatus" class="divide-y divide-slate-100">
+                                            <!-- Dinâmico -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Manutenções por Categoria -->
+                        <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                            <h3 class="text-xs font-extrabold text-slate-700 uppercase tracking-wider border-b pb-2">Manutenções por Categoria</h3>
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
+                                <div class="h-56">
+                                    <canvas id="chartCategoria"></canvas>
+                                </div>
+                                <div class="overflow-y-auto max-h-56 border border-slate-200 rounded-xl">
+                                    <table class="w-full text-xs text-left">
+                                        <thead class="bg-slate-50 text-slate-700 font-bold border-b sticky top-0">
+                                            <tr>
+                                                <th class="p-2.5">Categoria</th>
+                                                <th class="p-2.5 text-right">Qtd</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="tabelaRelatorioCategoria" class="divide-y divide-slate-100">
+                                            <!-- Dinâmico -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- LINHA 2: RANKING POR SETOR / LOCAL -->
+                    <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                        <h3 class="text-xs font-extrabold text-slate-700 uppercase tracking-wider border-b pb-2">Solicitações por Setor / Local (Ranking de Demandas)</h3>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-xs text-left">
+                                <thead class="bg-slate-50 text-slate-700 font-bold border-b">
+                                    <tr>
+                                        <th class="p-2.5">Setor / Local</th>
+                                        <th class="p-2.5 text-right">Qtd Solicitações</th>
+                                        <th class="p-2.5 text-left">Representatividade Visual</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="tabelaRelatorioSetores" class="divide-y divide-slate-100">
+                                    <!-- Dinâmico -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- LINHA 3: MATRIZ CRUZADA SETOR X SUB-CATEGORIA / ITEM (IDÊNTICO À IMAGEM 4) -->
+                    <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                        <div class="flex justify-between items-center border-b pb-2">
+                            <h3 class="text-xs font-extrabold text-slate-700 uppercase tracking-wider">Matriz Cruzada: Setor / Local × Sub-Categoria / Item</h3>
+                            <span class="text-[11px] text-slate-500 font-medium">Contagem de peças e ocorrências por setor</span>
+                        </div>
+                        <div class="overflow-x-auto border border-slate-200 rounded-xl">
+                            <table id="tabelaMatrizCruzada" class="w-full text-xs text-left border-collapse">
+                                <!-- Gerado dinamicamente -->
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SUB-VISÃO 2: RELATÓRIO DIÁRIO - ROUPARIA HOSPITALAR (IMAGEM 1) -->
+                <div id="subview-rel-diario" class="space-y-6 hidden">
+                    <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-5" id="printableRelatorioDiario">
+                        <!-- Cabeçalho Oficial SEMUS / PS ANIL -->
+                        <div class="border-b-2 border-slate-800 pb-4 flex flex-wrap justify-between items-center gap-4">
+                            <div class="flex items-center gap-3">
+                                <div class="w-12 h-12 bg-blue-900 rounded-xl flex items-center justify-center text-white text-xl font-black shadow-sm">
+                                    🏥
+                                </div>
+                                <div>
+                                    <span class="text-[11px] font-black uppercase text-blue-900 tracking-wider block">Prefeitura de São Luís • SEMUS</span>
+                                    <h2 class="text-lg font-black text-slate-900 uppercase tracking-tight">Relatório Diário - Rouparia Hospitalar</h2>
+                                    <p class="text-[11px] text-slate-500 font-bold">Secretaria Municipal de Saúde • Pronto Socorro do Anil (PS Anil)</p>
+                                </div>
+                            </div>
+                            <div class="text-right">
+                                <span class="inline-block px-3 py-1 bg-amber-100 text-amber-900 rounded-full text-xs font-black border border-amber-300">Documento Oficial</span>
+                            </div>
+                        </div>
+
+                        <!-- Metadados: Data, Horário e Assinatura -->
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3.5 bg-slate-50 rounded-xl border border-slate-200 text-xs">
+                            <div>
+                                <span class="block text-[10px] font-bold text-slate-500 uppercase">Data de Referência</span>
+                                <span id="diarioDataRef" class="font-extrabold text-blue-900 text-sm">01/08/2026</span>
+                            </div>
+                            <div>
+                                <span class="block text-[10px] font-bold text-slate-500 uppercase">Horário de Funcionamento</span>
+                                <span class="font-bold text-slate-800">07:00 às 19:00 (Diurno)</span>
+                            </div>
+                            <div>
+                                <span class="block text-[10px] font-bold text-slate-500 uppercase">Assinatura e Matrícula do Responsável</span>
+                                <span class="font-semibold text-slate-700 italic">____________________________</span>
+                            </div>
+                        </div>
+
+                        <!-- GRID LINHA 1: 1. Quantitativo Recebido (Laranja) & 7. Estoque (Verde) -->
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                            <!-- 1. Quantitativo de Roupas Recebidas da Lavanderia -->
+                            <div class="border border-amber-300 rounded-xl overflow-hidden shadow-sm">
+                                <div class="bg-amber-500 text-white font-extrabold px-3 py-2 text-xs flex justify-between items-center">
+                                    <span>1. Quantitativo de Roupas Recebidas da Lavanderia</span>
+                                    <span class="text-[10px] bg-amber-600 px-2 py-0.5 rounded-full" id="totRecebidosPecas">0 peças</span>
+                                </div>
+                                <div class="max-h-96 overflow-y-auto">
+                                    <table class="w-full text-xs text-left">
+                                        <thead class="bg-amber-50 text-amber-950 font-bold border-b border-amber-200">
+                                            <tr>
+                                                <th class="p-2 border-r border-amber-200">Tipo de Roupa</th>
+                                                <th class="p-2 text-center w-36">Quantidade Recebida</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="tbodyDiarioRecebidos" class="divide-y divide-amber-100">
+                                            <!-- Dinâmico -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            <!-- 7. Estoque -->
+                            <div class="border border-emerald-400 rounded-xl overflow-hidden shadow-sm">
+                                <div class="bg-emerald-600 text-white font-extrabold px-3 py-2 text-xs flex justify-between items-center">
+                                    <span>7. Estoque</span>
+                                    <span class="text-[10px] bg-emerald-700 px-2 py-0.5 rounded-full" id="totEstoquePecas">Saldo Geral</span>
+                                </div>
+                                <div class="max-h-96 overflow-y-auto">
+                                    <table class="w-full text-xs text-left">
+                                        <thead class="bg-emerald-50 text-emerald-950 font-bold border-b border-emerald-200">
+                                            <tr>
+                                                <th class="p-2 border-r border-emerald-200">Tipo de Roupa</th>
+                                                <th class="p-2 text-center w-36">Quantidade</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="tbodyDiarioEstoque" class="divide-y divide-emerald-100">
+                                            <!-- Dinâmico -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- GRID LINHA 2: 2. Intercorrências (Amarelo) & 3. Distribuição (Ciano) -->
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                            <!-- 2. Intercorrências Totais por Setor -->
+                            <div class="border border-yellow-300 rounded-xl overflow-hidden shadow-sm">
+                                <div class="bg-yellow-400 text-slate-900 font-extrabold px-3 py-2 text-xs">
+                                    2. Intercorrências Totais por Setor
+                                </div>
+                                <div class="max-h-56 overflow-y-auto">
+                                    <table class="w-full text-xs text-left">
+                                        <thead class="bg-yellow-50 text-yellow-950 font-bold border-b border-yellow-200">
+                                            <tr>
+                                                <th class="p-2 border-r border-yellow-200">Setor</th>
+                                                <th class="p-2">Item / Inconformidade</th>
+                                                <th class="p-2 text-center w-16">Qtd</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="tbodyDiarioIntercorrencias" class="divide-y divide-yellow-100">
+                                            <!-- Dinâmico -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            <!-- 3. Distribuição Total de Roupas por Setor -->
+                            <div class="border border-cyan-400 rounded-xl overflow-hidden shadow-sm">
+                                <div class="bg-cyan-600 text-white font-extrabold px-3 py-2 text-xs flex justify-between items-center">
+                                    <span>3. Distribuição Total de Roupas por Setor</span>
+                                    <span class="text-[10px] bg-cyan-700 px-2 py-0.5 rounded-full" id="totDistribuidasPecas">0 enviadas</span>
+                                </div>
+                                <div class="max-h-56 overflow-y-auto">
+                                    <table class="w-full text-xs text-left">
+                                        <thead class="bg-cyan-50 text-cyan-950 font-bold border-b border-cyan-200">
+                                            <tr>
+                                                <th class="p-2 border-r border-cyan-200">Setor</th>
+                                                <th class="p-2 border-r border-cyan-200">Tipo de Roupa</th>
+                                                <th class="p-2 text-center w-28">Qtd Enviada</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="tbodyDiarioDistribuicao" class="divide-y divide-cyan-100">
+                                            <!-- Dinâmico -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- GRID LINHA 3: 4. Recolhimento Interno & 5/6. Devolução e Recolhimento Sujo -->
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                            <!-- 4. Recolhimento Interno -->
+                            <div class="border border-blue-900 rounded-xl overflow-hidden shadow-sm">
+                                <div class="bg-blue-950 text-white font-extrabold px-3 py-2 text-xs">
+                                    4. Recolhimento Interno
+                                </div>
+                                <div class="max-h-48 overflow-y-auto">
+                                    <table class="w-full text-xs text-left">
+                                        <thead class="bg-slate-100 text-slate-800 font-bold border-b border-slate-300">
+                                            <tr>
+                                                <th class="p-2 border-r border-slate-300">Setor</th>
+                                                <th class="p-2 text-center w-36">Kg Recolhido</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="tbodyDiarioRecolhimentoInterno" class="divide-y divide-slate-100">
+                                            <!-- Dinâmico -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            <!-- 5 e 6: Devoluções e Recolhimento Sujo -->
+                            <div class="space-y-4">
+                                <div class="border border-slate-300 rounded-xl overflow-hidden shadow-sm">
+                                    <div class="bg-slate-800 text-white font-extrabold px-3 py-2 text-xs">
+                                        5. Devolução de Roupas Processadas que Apresentam Inconformidades (KG)
+                                    </div>
+                                    <div class="p-3 bg-slate-50 flex justify-between items-center text-xs">
+                                        <span class="font-bold text-slate-600">Valor Total (KG):</span>
+                                        <span id="diarioDevolucaoKg" class="font-extrabold text-rose-700 text-sm">0.00 kg</span>
+                                    </div>
+                                </div>
+
+                                <div class="border border-blue-900 rounded-xl overflow-hidden shadow-sm">
+                                    <div class="bg-blue-900 text-white font-extrabold px-3 py-2 text-xs">
+                                        6. Recolhimento Sujo
+                                    </div>
+                                    <div class="p-3 bg-blue-50 flex justify-between items-center text-xs">
+                                        <span class="font-bold text-blue-900">Valor Total (KG):</span>
+                                        <span id="diarioRecolhimentoSujoKg" class="font-extrabold text-blue-950 text-sm">0.00 kg</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 8. Ocorrências do Turno -->
+                        <div class="border border-slate-200 rounded-xl p-4 bg-slate-50 space-y-2">
+                            <span class="text-xs font-black text-slate-800 uppercase block">8. Ocorrências do Turno</span>
+                            <div id="diarioOcorrenciasTurno" class="text-xs text-slate-700 leading-relaxed italic bg-white p-3 rounded-lg border border-slate-200 min-h-[60px]">
+                                Nenhuma ocorrência registrada para este plantão.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SUB-VISÃO 3: PLANILHA DE ENXOVAL ENTREGUE NAS ÁREAS (IMAGEM 2) -->
+                <div id="subview-rel-enxoval" class="space-y-6 hidden">
+                    <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-5" id="printableEnxovalEntregue">
+                        <!-- Cabeçalho Oficial DOC 01 -->
+                        <div class="border-b-2 border-slate-800 pb-4 flex flex-wrap justify-between items-center gap-4">
+                            <div class="flex items-center gap-3">
+                                <div class="w-12 h-12 bg-amber-600 rounded-xl flex items-center justify-center text-white text-xl font-black shadow-sm">
+                                    📦
+                                </div>
+                                <div>
+                                    <span class="text-[11px] font-black uppercase text-amber-700 tracking-wider block">Prefeitura de São Luís • SEMUS</span>
+                                    <h2 class="text-lg font-black text-slate-900 uppercase tracking-tight">Planilha de Enxoval Entregue nas Áreas</h2>
+                                    <p class="text-[11px] text-slate-500 font-bold">Secretaria Municipal de Saúde • Pronto Socorro do Anil (PS Anil)</p>
+                                </div>
+                            </div>
+                            <div class="text-right">
+                                <span class="block text-[11px] font-extrabold text-slate-700">DOC Nº: SEMUS/SUPDAM /Plan.Enx.Entr.Áreas./ 01</span>
+                                <span class="text-xs font-black text-blue-900" id="enxovalDataRef">DATA: 01/08/2026</span>
+                            </div>
+                        </div>
+
+                        <div class="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs">
+                            <span class="font-bold text-slate-600 uppercase text-[10px]">Assinatura e Matrícula do Responsável pela Entrega:</span>
+                            <span class="ml-2 italic text-slate-800">________________________________________________</span>
+                        </div>
+
+                        <!-- Os 4 Quadrantes de Setores (Grid 2x2) -->
+                        <div id="containerQuadrantesEnxoval" class="grid grid-cols-1 md:grid-cols-2 gap-5">
+                            <!-- Gerado dinamicamente com os 4 setores que receberam enxoval -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SUB-VISÃO 4: PLANILHA DE PESO DO ENXOVAL SUJO (IMAGEM 3) -->
+                <div id="subview-rel-peso" class="space-y-6 hidden">
+                    <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-5" id="printablePesoSujo">
+                        <!-- Cabeçalho Oficial DOC 01 Peso Sujo -->
+                        <div class="border-b-2 border-slate-800 pb-4 flex flex-wrap justify-between items-center gap-4">
+                            <div class="flex items-center gap-3">
+                                <div class="w-12 h-12 bg-blue-900 rounded-xl flex items-center justify-center text-white text-xl font-black shadow-sm">
+                                    ⚖️
+                                </div>
+                                <div>
+                                    <span class="text-[11px] font-black uppercase text-blue-900 tracking-wider block">Secretaria Municipal de Saúde - SEMUS • SUPDAM</span>
+                                    <h2 class="text-lg font-black text-slate-900 uppercase tracking-tight">Planilha de Peso do Enxoval Sujo</h2>
+                                    <p class="text-[11px] text-slate-500 font-bold">Superintendência de Apoio e Manutenção • PS Anil</p>
+                                </div>
+                            </div>
+                            <div class="text-right">
+                                <span class="block text-[11px] font-extrabold text-slate-700">DOC Nº: SEMUS/SUPDAM/Plan.Peso.Enx.Sujo./01</span>
+                                <span class="text-xs font-black text-blue-900" id="pesoSujoDataRef">DATA: 01/08/2026</span>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs">
+                            <div>
+                                <span class="font-bold text-slate-600 uppercase text-[10px] block">Responsável pela Pesagem (SEMUS):</span>
+                                <span class="italic text-slate-800">___________________________________</span>
+                            </div>
+                            <div>
+                                <span class="font-bold text-slate-600 uppercase text-[10px] block">Matrícula:</span>
+                                <span class="italic text-slate-800">_____________________</span>
+                            </div>
+                        </div>
+
+                        <!-- Tabela Oficial de Peso Sujo -->
+                        <div class="border border-slate-300 rounded-xl overflow-hidden shadow-sm">
+                            <div class="overflow-x-auto">
+                                <table class="w-full text-xs text-left border-collapse">
+                                    <thead class="bg-gradient-to-r from-blue-900 to-indigo-900 text-white font-bold border-b">
+                                        <tr>
+                                            <th class="p-2.5 text-center w-12 border-r border-blue-800">ORD.</th>
+                                            <th class="p-2.5 border-r border-blue-800">DATA</th>
+                                            <th class="p-2.5 text-center border-r border-blue-800">QTD HAMPER</th>
+                                            <th class="p-2.5 text-center border-r border-blue-800">PESO (KG)</th>
+                                            <th class="p-2.5 border-r border-blue-800">ASSINATURA E MATRÍCULA RESP. ENTREGA (SEMUS)</th>
+                                            <th class="p-2.5">ASSINATURA RESP. EMPRESA TERCEIRIZADA (LAVARE)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="tbodyPesoSujoRegistros" class="divide-y divide-slate-200">
+                                        <!-- Dinâmico -->
+                                    </tbody>
+                                    <tfoot class="bg-amber-100 font-black border-t-2 border-slate-400 text-slate-900">
+                                        <tr>
+                                            <td colspan="2" class="p-2.5 text-right uppercase">TOTAL GERAL:</td>
+                                            <td class="p-2.5 text-center text-blue-900 text-sm" id="pesoSujoTotalHampers">0</td>
+                                            <td class="p-2.5 text-center text-emerald-800 text-sm" id="pesoSujoTotalKg">0.00 kg</td>
+                                            <td colspan="2" class="p-2.5 text-slate-500 italic text-[11px]">Conferido e pesado conforme pesagem em balança</td>
+                                        </tr>
+                                    </tfoot>
+                                </table>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -2183,8 +2670,12 @@ def painel_principal():
                 <div class="p-4 bg-slate-50 border-t border-slate-200 flex justify-between items-center">
                     <span class="text-[11px] text-slate-400 font-medium" id="viewManutRodapeRef">Registro no Banco de Dados</span>
                     <div class="flex gap-2">
-                        <button type="button" onclick="fecharModalVisualizarManut()" class="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold rounded-xl transition">Fechar</button>
-                        <button type="button" id="btnEditarFromViewManut" class="px-4 py-2 bg-blue-900 hover:bg-blue-800 text-white font-bold rounded-xl shadow-sm transition flex items-center gap-1.5">
+                        <button type="button" onclick="fecharModalVisualizarManut()" class="px-3.5 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-xs rounded-xl transition">Fechar</button>
+                        <button type="button" onclick="imprimirFichaManutencao()" class="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs rounded-xl shadow-sm transition flex items-center gap-1.5" title="Imprimir Ficha Oficial com Assinaturas">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+                            <span>Imprimir Ficha</span>
+                        </button>
+                        <button type="button" id="btnEditarFromViewManut" class="px-3.5 py-2 bg-blue-900 hover:bg-blue-800 text-white font-bold text-xs rounded-xl shadow-sm transition flex items-center gap-1.5">
                             <span>✏️</span> Editar Chamado
                         </button>
                     </div>
@@ -2263,8 +2754,12 @@ def painel_principal():
                 <div class="p-4 bg-slate-50 border-t border-slate-200 flex justify-between items-center">
                     <span class="text-[11px] text-slate-400 font-medium">Registro de Rouparia</span>
                     <div class="flex gap-2">
-                        <button type="button" onclick="fecharModalVisualizarRoupa()" class="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold rounded-xl transition">Fechar</button>
-                        <button type="button" id="btnEditarFromViewRoupa" class="px-4 py-2 bg-blue-900 hover:bg-blue-800 text-white font-bold rounded-xl shadow-sm transition flex items-center gap-1.5">
+                        <button type="button" onclick="fecharModalVisualizarRoupa()" class="px-3.5 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-xs rounded-xl transition">Fechar</button>
+                        <button type="button" onclick="imprimirFichaRouparia()" class="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs rounded-xl shadow-sm transition flex items-center gap-1.5" title="Imprimir Comprovante Oficial de Movimentação">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+                            <span>Imprimir Ficha</span>
+                        </button>
+                        <button type="button" id="btnEditarFromViewRoupa" class="px-3.5 py-2 bg-blue-900 hover:bg-blue-800 text-white font-bold text-xs rounded-xl shadow-sm transition flex items-center gap-1.5">
                             <span>✏️</span> Editar Movimentação
                         </button>
                     </div>
@@ -2567,7 +3062,13 @@ def painel_principal():
                 });
 
                 if (abaId === 'consolidado') carregarConsolidado();
-                if (abaId === 'relatorios') carregarRelatorios();
+                if (abaId === 'relatorios') {
+                    if (typeof subAbaRelatorioAtiva !== 'undefined' && subAbaRelatorioAtiva !== 'manutencao') {
+                        carregarDocumentosRouparia();
+                    } else {
+                        carregarRelatorios();
+                    }
+                }
                 if (abaId === 'historico') carregarHistorico();
                 if (abaId === 'configuracoes') carregarConfiguracoes();
             }
@@ -2977,6 +3478,581 @@ def painel_principal():
                 } catch (e) {
                     console.error('Erro ao carregar relatórios:', e);
                 }
+            }
+
+            // ===============================================================
+            // SUB-ABAS DE RELATÓRIOS & DOCUMENTOS OFICIAIS DE ROUPARIA
+            // ===============================================================
+            let subAbaRelatorioAtiva = 'manutencao';
+
+            function alternarSubRelatorio(sub) {
+                subAbaRelatorioAtiva = sub;
+                const subs = ['manutencao', 'rouparia_diario', 'rouparia_enxoval', 'rouparia_peso'];
+                const btns = {
+                    'manutencao': document.getElementById('btnSubRelManut'),
+                    'rouparia_diario': document.getElementById('btnSubRelDiario'),
+                    'rouparia_enxoval': document.getElementById('btnSubRelEnxoval'),
+                    'rouparia_peso': document.getElementById('btnSubRelPeso')
+                };
+                const views = {
+                    'manutencao': document.getElementById('subview-rel-manut'),
+                    'rouparia_diario': document.getElementById('subview-rel-diario'),
+                    'rouparia_enxoval': document.getElementById('subview-rel-enxoval'),
+                    'rouparia_peso': document.getElementById('subview-rel-peso')
+                };
+
+                subs.forEach(s => {
+                    if (s === sub) {
+                        if (views[s]) views[s].classList.remove('hidden');
+                        if (btns[s]) btns[s].className = 'px-3.5 py-2 text-xs font-bold rounded-xl bg-blue-900 text-white shadow-sm transition flex items-center gap-1.5';
+                    } else {
+                        if (views[s]) views[s].classList.add('hidden');
+                        if (btns[s]) btns[s].className = 'px-3.5 py-2 text-xs font-bold rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 transition flex items-center gap-1.5';
+                    }
+                });
+
+                const wMes = document.getElementById('wrapperFiltroMesManut');
+                const wData = document.getElementById('wrapperFiltroDataRouparia');
+                if (sub === 'manutencao') {
+                    if (wMes) wMes.classList.remove('hidden');
+                    if (wData) wData.classList.add('hidden');
+                    carregarRelatorios();
+                } else {
+                    if (wMes) wMes.classList.add('hidden');
+                    if (wData) wData.classList.remove('hidden');
+                    carregarDocumentosRouparia();
+                }
+            }
+
+            // Carregar Documentos Oficiais da Rouparia (Imagens 1, 2 e 3)
+            async function carregarDocumentosRouparia() {
+                const selData = document.getElementById('relatorioFiltroDataRoupa');
+                const dataVal = (selData && selData.value) ? selData.value : '01/08/2026';
+                try {
+                    const res = await fetch(`/api/relatorios/rouparia/documentos?data=${encodeURIComponent(dataVal)}`);
+                    if (!res.ok) throw new Error('Falha ao carregar documentos');
+                    const d = await res.json();
+
+                    // Preencher o seletor de datas se necessário
+                    if (selData && (selData.options.length <= 1 || !Array.from(selData.options).some(o => o.value === d.data_selecionada))) {
+                        selData.innerHTML = '';
+                        d.datas_disponiveis.forEach(dt => {
+                            const opt = document.createElement('option');
+                            opt.value = dt;
+                            opt.textContent = dt;
+                            if (dt === d.data_selecionada) opt.selected = true;
+                            selData.appendChild(opt);
+                        });
+                    }
+
+                    // Atualizar referências visuais de data
+                    const elD1 = document.getElementById('diarioDataRef');
+                    if (elD1) elD1.textContent = d.data_selecionada;
+                    const elD2 = document.getElementById('enxovalDataRef');
+                    if (elD2) elD2.textContent = 'DATA: ' + d.data_selecionada;
+                    const elD3 = document.getElementById('pesoSujoDataRef');
+                    if (elD3) elD3.textContent = 'DATA: ' + d.data_selecionada;
+
+                    // 1. Renderizar Relatório Diário (Imagem 1)
+                    renderizarRelatorioDiario(d.relatorio_diario, d.itens_nomes);
+
+                    // 2. Renderizar Enxoval Entregue nas Áreas (Imagem 2)
+                    renderizarEnxovalEntregue(d.enxoval_entregue, d.itens_nomes);
+
+                    // 3. Renderizar Peso Sujo (Imagem 3)
+                    renderizarPesoSujo(d.peso_sujo);
+
+                } catch (e) {
+                    console.error('Erro ao carregar documentos de rouparia:', e);
+                }
+            }
+
+            // Renderizar Relatório Diário (Imagem 1)
+            function renderizarRelatorioDiario(rd, itensNomes) {
+                // 1. Quantitativo Recebido
+                const tbRec = document.getElementById('tbodyDiarioRecebidos');
+                if (tbRec) {
+                    tbRec.innerHTML = '';
+                    let totRec = 0;
+                    itensNomes.forEach(it => {
+                        const qtd = rd.recebidos[it] || 0;
+                        totRec += qtd;
+                        tbRec.innerHTML += `
+                            <tr class="hover:bg-amber-50/50">
+                                <td class="p-2 border-r border-amber-100 font-medium text-slate-800">${it}</td>
+                                <td class="p-2 text-center font-bold ${qtd > 0 ? 'text-amber-800 text-sm' : 'text-red-500'}">${qtd}</td>
+                            </tr>
+                        `;
+                    });
+                    const bRec = document.getElementById('totRecebidosPecas');
+                    if (bRec) bRec.textContent = `${totRec} peças recebidas`;
+                }
+
+                // 7. Estoque
+                const tbEst = document.getElementById('tbodyDiarioEstoque');
+                if (tbEst) {
+                    tbEst.innerHTML = '';
+                    itensNomes.forEach(it => {
+                        const qtd = rd.estoque[it] || 0;
+                        tbEst.innerHTML += `
+                            <tr class="hover:bg-emerald-50/50">
+                                <td class="p-2 border-r border-emerald-100 font-medium text-slate-800">${it}</td>
+                                <td class="p-2 text-center font-bold ${qtd < 0 ? 'text-rose-600' : qtd > 0 ? 'text-emerald-800 font-black' : 'text-slate-400'}">${qtd}</td>
+                            </tr>
+                        `;
+                    });
+                }
+
+                // 2. Intercorrências
+                const tbInt = document.getElementById('tbodyDiarioIntercorrencias');
+                if (tbInt) {
+                    tbInt.innerHTML = '';
+                    const setoresInt = Object.keys(rd.intercorrencias);
+                    if (setoresInt.length === 0) {
+                        tbInt.innerHTML = `<tr><td colspan="3" class="p-4 text-center text-slate-400 italic">Nenhuma intercorrência registrada nesta data.</td></tr>`;
+                    } else {
+                        setoresInt.forEach(st => {
+                            rd.intercorrencias[st].forEach(oc => {
+                                tbInt.innerHTML += `
+                                    <tr class="hover:bg-yellow-50/50">
+                                        <td class="p-2 border-r border-yellow-100 font-bold text-slate-800">${st}</td>
+                                        <td class="p-2 text-slate-700">${oc.item}: <span class="italic text-rose-700">${oc.inconformidade}</span></td>
+                                        <td class="p-2 text-center font-bold text-amber-900">${oc.qtd}</td>
+                                    </tr>
+                                `;
+                            });
+                        });
+                    }
+                }
+
+                // 3. Distribuição por Setor
+                const tbDist = document.getElementById('tbodyDiarioDistribuicao');
+                if (tbDist) {
+                    tbDist.innerHTML = '';
+                    let totDist = 0;
+                    if (rd.distribuicao.length === 0) {
+                        tbDist.innerHTML = `<tr><td colspan="3" class="p-4 text-center text-slate-400 italic">Nenhuma entrega para setores nesta data.</td></tr>`;
+                    } else {
+                        rd.distribuicao.forEach(ds => {
+                            totDist += ds.qtd;
+                            tbDist.innerHTML += `
+                                <tr class="hover:bg-cyan-50/50">
+                                    <td class="p-2 border-r border-cyan-100 font-bold text-slate-800">${ds.setor}</td>
+                                    <td class="p-2 border-r border-cyan-100 text-slate-700">${ds.item}</td>
+                                    <td class="p-2 text-center font-bold text-cyan-900">${ds.qtd}</td>
+                                </tr>
+                            `;
+                        });
+                    }
+                    const bDist = document.getElementById('totDistribuidasPecas');
+                    if (bDist) bDist.textContent = `${totDist} peças enviadas`;
+                }
+
+                // 4. Recolhimento Interno
+                const tbRecInt = document.getElementById('tbodyDiarioRecolhimentoInterno');
+                if (tbRecInt) {
+                    tbRecInt.innerHTML = '';
+                    if (rd.recolhimento_interno.length === 0) {
+                        tbRecInt.innerHTML = `<tr><td colspan="2" class="p-4 text-center text-slate-400 italic">Nenhum recolhimento interno registrado nesta data.</td></tr>`;
+                    } else {
+                        rd.recolhimento_interno.forEach(ri => {
+                            tbRecInt.innerHTML += `
+                                <tr class="hover:bg-slate-50">
+                                    <td class="p-2 border-r border-slate-200 font-medium text-slate-800">${ri.setor}</td>
+                                    <td class="p-2 text-center font-bold text-blue-900">${ri.peso_kg.toFixed(2)} kg</td>
+                                </tr>
+                            `;
+                        });
+                    }
+                }
+
+                // 5 e 6. Devolução e Recolhimento Sujo
+                const elDev = document.getElementById('diarioDevolucaoKg');
+                if (elDev) elDev.textContent = `${rd.devolucao_inconf_kg.toFixed(2)} kg`;
+                const elSujo = document.getElementById('diarioRecolhimentoSujoKg');
+                if (elSujo) elSujo.textContent = `${rd.recolhimento_sujo_kg.toFixed(2)} kg`;
+
+                // 8. Ocorrências
+                const elOcor = document.getElementById('diarioOcorrenciasTurno');
+                if (elOcor) {
+                    if (rd.ocorrencias.length > 0) {
+                        elOcor.innerHTML = rd.ocorrencias.map(o => `• ${o}`).join('<br>');
+                    } else {
+                        elOcor.textContent = 'Nenhuma ocorrência registrada para este plantão.';
+                    }
+                }
+            }
+
+            // Renderizar Enxoval Entregue nas Áreas (Imagem 2)
+            function renderizarEnxovalEntregue(entregas, itensNomes) {
+                const container = document.getElementById('containerQuadrantesEnxoval');
+                if (!container) return;
+                container.innerHTML = '';
+
+                const cores = [
+                    { border: 'border-amber-400', bg: 'bg-amber-500', text: 'text-amber-950', light: 'bg-amber-50' },
+                    { border: 'border-yellow-400', bg: 'bg-yellow-400', text: 'text-yellow-950', light: 'bg-yellow-50' },
+                    { border: 'border-cyan-400', bg: 'bg-cyan-600', text: 'text-cyan-950', light: 'bg-cyan-50' },
+                    { border: 'border-emerald-400', bg: 'bg-emerald-600', text: 'text-emerald-950', light: 'bg-emerald-50' }
+                ];
+
+                const listaSetores = [...entregas];
+                const nomesPadrao = ['Triagem', 'Sala de Observação', 'Medicação', 'CME'];
+                while (listaSetores.length < 4) {
+                    const idx = listaSetores.length;
+                    listaSetores.push({
+                        setor: nomesPadrao[idx] || `Setor ${idx + 1}`,
+                        horario: '',
+                        responsavel_recebimento: '',
+                        itens: {}
+                    });
+                }
+
+                listaSetores.slice(0, 4).forEach((sec, idx) => {
+                    const c = cores[idx % cores.length];
+                    let rowsHtml = '';
+                    itensNomes.forEach(it => {
+                        const qtd = sec.itens[it] || 0;
+                        rowsHtml += `
+                            <tr class="hover:bg-slate-50">
+                                <td class="p-1.5 border-r border-slate-200 text-slate-800 text-[11px] font-medium">${it}</td>
+                                <td class="p-1.5 text-center font-bold text-[11px] ${qtd > 0 ? 'text-blue-900 font-black' : 'text-red-500'}">${qtd}</td>
+                            </tr>
+                        `;
+                    });
+
+                    container.innerHTML += `
+                        <div class="border-2 ${c.border} rounded-xl overflow-hidden shadow-sm flex flex-col justify-between">
+                            <div>
+                                <div class="${c.bg} text-white p-2.5 flex justify-between items-center text-xs font-bold">
+                                    <span>SETOR: ${sec.setor.toUpperCase()}</span>
+                                    <span>HORÁRIO: ${sec.horario || '__:__'}</span>
+                                </div>
+                                <div class="max-h-80 overflow-y-auto">
+                                    <table class="w-full text-xs text-left border-collapse">
+                                        <thead class="${c.light} ${c.text} font-bold border-b border-slate-200 sticky top-0">
+                                            <tr>
+                                                <th class="p-1.5 border-r border-slate-200">DESCRIMINAÇÃO</th>
+                                                <th class="p-1.5 text-center w-20">QTD</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody class="divide-y divide-slate-100">
+                                            ${rowsHtml}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div class="p-2.5 bg-slate-50 border-t border-slate-200 text-[11px] font-semibold text-slate-700 flex justify-between items-center">
+                                <span>RESPONSÁVEL PELO RECEBIMENTO:</span>
+                                <span class="italic text-slate-900 font-bold">${sec.responsavel_recebimento || '_______________________'}</span>
+                            </div>
+                        </div>
+                    `;
+                });
+            }
+
+            // Renderizar Peso do Enxoval Sujo (Imagem 3)
+            function renderizarPesoSujo(ps) {
+                const tb = document.getElementById('tbodyPesoSujoRegistros');
+                if (!tb) return;
+                tb.innerHTML = '';
+
+                const regs = ps.registros || [];
+                regs.forEach(r => {
+                    tb.innerHTML += `
+                        <tr class="hover:bg-blue-50/50">
+                            <td class="p-2 text-center font-bold text-slate-700 border-r border-slate-200">${r.ord}</td>
+                            <td class="p-2 font-medium text-slate-800 border-r border-slate-200">${r.data}</td>
+                            <td class="p-2 text-center font-bold text-slate-900 border-r border-slate-200">${r.qtd_hamper || '-'}</td>
+                            <td class="p-2 text-center font-bold text-emerald-800 border-r border-slate-200">${r.peso_kg > 0 ? r.peso_kg.toFixed(2) + ' kg' : '-'}</td>
+                            <td class="p-2 text-slate-700 border-r border-slate-200 italic">${r.resp_entrega}</td>
+                            <td class="p-2 text-slate-700 italic">${r.resp_recebimento}</td>
+                        </tr>
+                    `;
+                });
+
+                const totalLinhas = Math.max(20, regs.length);
+                for (let i = regs.length + 1; i <= totalLinhas; i++) {
+                    tb.innerHTML += `
+                        <tr class="h-6">
+                            <td class="p-1.5 text-center text-slate-400 border-r border-slate-200">${i}</td>
+                            <td class="border-r border-slate-200"></td>
+                            <td class="border-r border-slate-200"></td>
+                            <td class="border-r border-slate-200"></td>
+                            <td class="border-r border-slate-200"></td>
+                            <td></td>
+                        </tr>
+                    `;
+                }
+
+                const elTotH = document.getElementById('pesoSujoTotalHampers');
+                if (elTotH) elTotH.textContent = ps.total_hampers;
+                const elTotKg = document.getElementById('pesoSujoTotalKg');
+                if (elTotKg) elTotKg.textContent = `${ps.total_peso_kg.toFixed(2)} kg`;
+            }
+
+            // ===============================================================
+            // MOTOR DE IMPRESSÃO OFICIAL (HTML / A4 COM CSS DEDICADO)
+            // ===============================================================
+            function imprimirDocumentoHtml(conteudoHtml, titulo) {
+                const frame = document.createElement('iframe');
+                frame.style.position = 'fixed';
+                frame.style.right = '0';
+                frame.style.bottom = '0';
+                frame.style.width = '0';
+                frame.style.height = '0';
+                frame.style.border = '0';
+                document.body.appendChild(frame);
+
+                const doc = frame.contentWindow.document;
+                doc.open();
+                doc.write(`
+                    <!DOCTYPE html>
+                    <html lang="pt-BR">
+                    <head>
+                        <meta charset="utf-8">
+                        <title>${titulo || 'Documento Oficial - SEMUS / PS ANIL'}</title>
+                        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css">
+                        <style>
+                            @page { size: A4; margin: 12mm 10mm; }
+                            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; background: #fff; color: #0f172a; font-size: 11px; line-height: 1.3; }
+                            table { width: 100%; border-collapse: collapse; }
+                            th, td { border: 1px solid #cbd5e1; padding: 4px 6px; }
+                            .no-print { display: none !important; }
+                            @media print {
+                                body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+                            }
+                        </style>
+                    </head>
+                    <body class="p-2">
+                        ${conteudoHtml}
+                        <script>
+                            window.onload = function() {
+                                window.focus();
+                                window.print();
+                                setTimeout(() => { window.frameElement.remove(); }, 2000);
+                            };
+                        </script>
+                    </body>
+                    </html>
+                `);
+                doc.close();
+            }
+
+            // Imprimir o Relatório ou Documento Ativo na tela
+            function imprimirRelatorioAtivo() {
+                if (subAbaRelatorioAtiva === 'manutencao') {
+                    const el = document.getElementById('subview-rel-manut');
+                    if (el) {
+                        const html = `
+                            <div class="border-b-2 border-slate-900 pb-3 mb-4 flex justify-between items-center">
+                                <div>
+                                    <span class="text-xs font-black uppercase text-blue-900 block">Prefeitura Municipal de São Luís • SEMUS</span>
+                                    <h1 class="text-lg font-black uppercase">Relatório de Manutenções e Insumos Hospitalares</h1>
+                                    <p class="text-xs text-slate-500">Pronto Socorro do Anil (PS Anil) • Relatório Sintético de Gestão</p>
+                                </div>
+                                <div class="text-right text-xs">
+                                    <span class="font-bold">Mês de Referência: ${document.getElementById('relatorioFiltroMes').value}</span><br>
+                                    <span class="text-slate-400">Gerado em: ${new Date().toLocaleDateString('pt-BR')} às ${obterHoraAtual()}</span>
+                                </div>
+                            </div>
+                            ${el.innerHTML}
+                        `;
+                        imprimirDocumentoHtml(html, 'Relatorio-Manutencoes-PS-ANIL');
+                    }
+                } else if (subAbaRelatorioAtiva === 'rouparia_diario') {
+                    const el = document.getElementById('printableRelatorioDiario');
+                    if (el) imprimirDocumentoHtml(el.innerHTML, 'Relatorio-Diario-Rouparia-PS-ANIL');
+                } else if (subAbaRelatorioAtiva === 'rouparia_enxoval') {
+                    const el = document.getElementById('printableEnxovalEntregue');
+                    if (el) imprimirDocumentoHtml(el.innerHTML, 'Planilha-Enxoval-Entregue-PS-ANIL');
+                } else if (subAbaRelatorioAtiva === 'rouparia_peso') {
+                    const el = document.getElementById('printablePesoSujo');
+                    if (el) imprimirDocumentoHtml(el.innerHTML, 'Planilha-Peso-Enxoval-Sujo-PS-ANIL');
+                }
+            }
+
+            // Imprimir Ficha de Manutenção (Aba Detalhes do BD)
+            function imprimirFichaManutencao() {
+                const codigo = document.getElementById('viewManutCodigo').textContent;
+                const status = document.getElementById('viewManutStatusBadge').textContent;
+                const dataHora = document.getElementById('viewManutDataHora').textContent;
+                const turno = document.getElementById('viewManutTurno').textContent;
+                const tipo = document.getElementById('viewManutTipo').textContent;
+                const categoria = document.getElementById('viewManutCategoria').textContent;
+                const item = document.getElementById('viewManutItem').textContent;
+                const setor = document.getElementById('viewManutSetor').textContent;
+                const quantidade = document.getElementById('viewManutQtd').textContent;
+                const chamado = document.getElementById('viewManutChamado').textContent;
+                const conclusao = document.getElementById('viewManutConclusao').textContent;
+                const respEntrega = document.getElementById('viewManutRespEntrega').textContent;
+                const respRecebimento = document.getElementById('viewManutRespRecebimento').textContent;
+                const descricao = document.getElementById('viewManutDescricao').textContent;
+                const observacoes = document.getElementById('viewManutObservacoes').textContent;
+
+                const html = `
+                    <div class="p-6 space-y-4 max-w-3xl mx-auto">
+                        <!-- Cabeçalho Oficial -->
+                        <div class="border-b-2 border-slate-900 pb-3 flex justify-between items-center">
+                            <div>
+                                <span class="text-xs font-black uppercase text-blue-900 block">Prefeitura de São Luís • SEMUS</span>
+                                <h1 class="text-xl font-black uppercase text-slate-900">Ficha Técnica de Atendimento de Manutenção</h1>
+                                <p class="text-xs text-slate-500 font-bold">Pronto Socorro do Anil (PS Anil) • Superintendência de Apoio e Manutenção</p>
+                            </div>
+                            <div class="text-right">
+                                <span class="text-base font-black text-blue-900 block">${codigo}</span>
+                                <span class="inline-block px-2.5 py-0.5 rounded text-xs font-bold border border-slate-300 bg-slate-100">Status: ${status}</span>
+                            </div>
+                        </div>
+
+                        <!-- Tabela de Dados do Chamado -->
+                        <table class="w-full text-xs">
+                            <tr>
+                                <td class="bg-slate-100 font-bold w-1/4">Data & Horário:</td>
+                                <td class="w-1/4">${dataHora}</td>
+                                <td class="bg-slate-100 font-bold w-1/4">Turno:</td>
+                                <td class="w-1/4">${turno}</td>
+                            </tr>
+                            <tr>
+                                <td class="bg-slate-100 font-bold">Categoria do Serviço:</td>
+                                <td>${categoria}</td>
+                                <td class="bg-slate-100 font-bold">Tipo de Manutenção:</td>
+                                <td>${tipo}</td>
+                            </tr>
+                            <tr>
+                                <td class="bg-slate-100 font-bold">Item / Sub-Categoria:</td>
+                                <td>${item}</td>
+                                <td class="bg-slate-100 font-bold">Setor / Local:</td>
+                                <td class="font-bold">${setor}</td>
+                            </tr>
+                            <tr>
+                                <td class="bg-slate-100 font-bold">Nº Pedido / Chamado:</td>
+                                <td class="font-bold text-blue-900">${chamado || '-'}</td>
+                                <td class="bg-slate-100 font-bold">Quantidade / Volume:</td>
+                                <td>${quantidade}</td>
+                            </tr>
+                            <tr>
+                                <td class="bg-slate-100 font-bold">Data Conclusão / Retorno:</td>
+                                <td>${conclusao || '-'}</td>
+                                <td class="bg-slate-100 font-bold">Retrabalho:</td>
+                                <td>${status.includes('Retrabalho') ? 'SIM' : 'NÃO'}</td>
+                            </tr>
+                            <tr>
+                                <td class="bg-slate-100 font-bold">Resp. Entrega / Vistoria:</td>
+                                <td>${respEntrega || '-'}</td>
+                                <td class="bg-slate-100 font-bold">Resp. Recebimento:</td>
+                                <td>${respRecebimento || '-'}</td>
+                            </tr>
+                        </table>
+
+                        <!-- Descrição do Serviço -->
+                        <div class="border border-slate-300 p-3 rounded-lg bg-slate-50">
+                            <span class="block text-[10px] font-bold uppercase text-slate-500 mb-1">Descrição / Especificação da Demanda:</span>
+                            <p class="whitespace-pre-line text-xs font-medium text-slate-800 leading-relaxed">${descricao || 'Sem descrição cadastrada.'}</p>
+                        </div>
+
+                        <!-- Observações Gerais e Auditoria -->
+                        <div class="border border-blue-200 p-3 rounded-lg bg-blue-50/50">
+                            <span class="block text-[10px] font-bold uppercase text-blue-900 mb-1">Observações Gerais & Histórico de Edição:</span>
+                            <div class="whitespace-pre-line text-xs text-slate-700 leading-relaxed">${observacoes || 'Nenhuma observação registrada.'}</div>
+                        </div>
+
+                        <!-- Assinaturas -->
+                        <div class="pt-10 grid grid-cols-2 gap-8 text-center text-xs">
+                            <div>
+                                <div class="border-t border-slate-900 pt-2 font-bold">${respRecebimento || 'Responsável pelo Setor / Solicitante'}</div>
+                                <span class="text-[10px] text-slate-500 block">Assinatura / Matrícula</span>
+                            </div>
+                            <div>
+                                <div class="border-t border-slate-900 pt-2 font-bold">${respEntrega || 'Técnico Responsável / Executante'}</div>
+                                <span class="text-[10px] text-slate-500 block">Assinatura / Matrícula</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                imprimirDocumentoHtml(html, `Ficha-${codigo}-PS-ANIL`);
+            }
+
+            // Imprimir Ficha de Rouparia (Aba Detalhes do BD)
+            function imprimirFichaRouparia() {
+                const codigo = document.getElementById('viewRoupaCodigo').textContent;
+                const dataHora = document.getElementById('viewRoupaDataHora').textContent;
+                const turno = document.getElementById('viewRoupaTurno').textContent;
+                const tipo = document.getElementById('viewRoupaTipoMov').textContent;
+                const item = document.getElementById('viewRoupaItem').textContent;
+                const setor = document.getElementById('viewRoupaSetor').textContent;
+                const qtd = document.getElementById('viewRoupaQtd').textContent;
+                const peso = document.getElementById('viewRoupaPeso').textContent;
+                const pontual = document.getElementById('viewRoupaPontual').textContent;
+                const respUnidade = document.getElementById('viewRoupaRespUnidade').textContent;
+                const respTerc = document.getElementById('viewRoupaRespTerceirizada').textContent;
+                const inconf = document.getElementById('viewRoupaInconformidade').textContent;
+
+                const html = `
+                    <div class="p-6 space-y-4 max-w-3xl mx-auto">
+                        <div class="border-b-2 border-slate-900 pb-3 flex justify-between items-center">
+                            <div>
+                                <span class="text-xs font-black uppercase text-blue-900 block">Prefeitura de São Luís • SEMUS</span>
+                                <h1 class="text-xl font-black uppercase text-slate-900">Comprovante de Movimentação de Rouparia</h1>
+                                <p class="text-xs text-slate-500 font-bold">Pronto Socorro do Anil (PS Anil) • Gestão de Enxoval Hospitalar</p>
+                            </div>
+                            <div class="text-right">
+                                <span class="text-base font-black text-indigo-900 block">${codigo}</span>
+                                <span class="inline-block px-2.5 py-0.5 rounded text-xs font-bold border border-slate-300 bg-slate-100">${tipo}</span>
+                            </div>
+                        </div>
+
+                        <table class="w-full text-xs">
+                            <tr>
+                                <td class="bg-slate-100 font-bold w-1/4">Data & Horário:</td>
+                                <td class="w-1/4">${dataHora}</td>
+                                <td class="bg-slate-100 font-bold w-1/4">Turno:</td>
+                                <td class="w-1/4">${turno}</td>
+                            </tr>
+                            <tr>
+                                <td class="bg-slate-100 font-bold">Item do Enxoval:</td>
+                                <td class="font-bold text-slate-900">${item}</td>
+                                <td class="bg-slate-100 font-bold">Setor / Local:</td>
+                                <td class="font-bold">${setor}</td>
+                            </tr>
+                            <tr>
+                                <td class="bg-slate-100 font-bold">Quantidade de Peças:</td>
+                                <td class="font-bold text-blue-900">${qtd}</td>
+                                <td class="bg-slate-100 font-bold">Peso Registrado:</td>
+                                <td>${peso}</td>
+                            </tr>
+                            <tr>
+                                <td class="bg-slate-100 font-bold">Pontualidade (07h-19h):</td>
+                                <td>${pontual}</td>
+                                <td class="bg-slate-100 font-bold">Tipo Movimentação:</td>
+                                <td>${tipo}</td>
+                            </tr>
+                            <tr>
+                                <td class="bg-slate-100 font-bold">Resp. Unidade (SEMUS):</td>
+                                <td>${respUnidade || '-'}</td>
+                                <td class="bg-slate-100 font-bold">Resp. Terceirizada:</td>
+                                <td>${respTerc || 'LAVARE'}</td>
+                            </tr>
+                        </table>
+
+                        <div class="border border-amber-200 p-3 rounded-lg bg-amber-50/50">
+                            <span class="block text-[10px] font-bold uppercase text-amber-900 mb-1">Inconformidade / Ocorrências & Histórico:</span>
+                            <div class="whitespace-pre-line text-xs text-slate-800 leading-relaxed">${inconf || 'Nenhuma inconformidade ou observação registrada.'}</div>
+                        </div>
+
+                        <div class="pt-10 grid grid-cols-2 gap-8 text-center text-xs">
+                            <div>
+                                <div class="border-t border-slate-900 pt-2 font-bold">${respUnidade || 'Responsável Unidade (SEMUS)'}</div>
+                                <span class="text-[10px] text-slate-500 block">Assinatura / Matrícula</span>
+                            </div>
+                            <div>
+                                <div class="border-t border-slate-900 pt-2 font-bold">${respTerc || 'Responsável Empresa Terceirizada (LAVARE)'}</div>
+                                <span class="text-[10px] text-slate-500 block">Assinatura / Recebimento</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                imprimirDocumentoHtml(html, `Ficha-${codigo}-Rouparia-PS-ANIL`);
             }
 
             // Alternar Histórico
