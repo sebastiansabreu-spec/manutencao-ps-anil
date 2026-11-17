@@ -36,13 +36,25 @@ SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./hospital.db")
 if SQLALCHEMY_DATABASE_URL.startswith("postgres://"):
     SQLALCHEMY_DATABASE_URL = SQLALCHEMY_DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
+# Se for pooler do Neon, remover channel_binding pois PgBouncer do Neon não suporta SCRAM channel binding
+if "-pooler" in SQLALCHEMY_DATABASE_URL and "channel_binding=" in SQLALCHEMY_DATABASE_URL:
+    SQLALCHEMY_DATABASE_URL = re.sub(r'[?&]channel_binding=[^&]*', '', SQLALCHEMY_DATABASE_URL)
+    if "?" not in SQLALCHEMY_DATABASE_URL and "&" in SQLALCHEMY_DATABASE_URL:
+        SQLALCHEMY_DATABASE_URL = SQLALCHEMY_DATABASE_URL.replace("&", "?", 1)
+
 try:
     if "sqlite" in SQLALCHEMY_DATABASE_URL:
         engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
     else:
-        engine = create_engine(SQLALCHEMY_DATABASE_URL, pool_pre_ping=True, pool_recycle=300)
+        engine = create_engine(
+            SQLALCHEMY_DATABASE_URL,
+            pool_pre_ping=True,
+            pool_recycle=300,
+            connect_args={"connect_timeout": 5}
+        )
     with engine.connect() as conn:
         pass
+    print("✅ Conectado ao banco de dados com sucesso!")
 except Exception as e:
     print(f"⚠️ Atenção: Falha ao conectar ao banco remoto. Usando SQLite local (hospital.db). Detalhe: {e}")
     SQLALCHEMY_DATABASE_URL = "sqlite:///./hospital.db"
@@ -4695,3 +4707,10 @@ def painel_principal():
     </body>
     </html>
     """
+
+if __name__ == "__main__":
+    import uvicorn
+    # Obter porta do Render ($PORT) ou 10000 no Render ou 8000 local
+    porta = int(os.environ.get("PORT", 10000 if os.environ.get("RENDER") else 8000))
+    print(f"🚀 Iniciando servidor FastAPI na porta {porta} (0.0.0.0)...")
+    uvicorn.run("main:app", host="0.0.0.0", port=porta, reload=False)
