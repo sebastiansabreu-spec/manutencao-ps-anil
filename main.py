@@ -129,6 +129,29 @@ class Parametro(Base):
 # Tabela de Usuários do Sistema (Login e Controle de Acesso)
 import hashlib
 
+ITENS_OFICIAIS_ENXOVAL = [
+    "Lençol Paciente",
+    "Lençol de Maca",
+    "Travessa",
+    "Calça Privativa",
+    "Camisa Privativa",
+    "Roupa Privativa (Kit)",
+    "Capote",
+    "Campo Simples P (40x40)",
+    "Campo Simples P (50x50)",
+    "Campo Simples M (80x80)",
+    "Campo Simples G (1,20x1,20)",
+    "Campo Duplo P (50x50)",
+    "Campo Duplo M (80x80)",
+    "Campo Duplo G (1,20x1,20)",
+    "Campo Fenestrado P",
+    "Campo Fenestrado M (80x80)",
+    "Campo Fenestrado G (1,20x1,20)",
+    "Campo Fenestrado G (1,60x1,60)",
+    "Saco Hamper",
+    "Pano de Biombo"
+]
+
 def gerar_hash_senha(senha: str) -> str:
     return hashlib.sha256(senha.encode('utf-8')).hexdigest()
 
@@ -273,6 +296,22 @@ def inicializar_usuarios_padrao():
         else:
             plantao.senha_hash = gerar_hash_senha("psanil")
             plantao.ativo = 1
+
+        # Sincronizar itens oficiais de enxoval (manter estritamente os 20 itens oficiais)
+        db.query(ConfiguracaoItem).filter(
+            ConfiguracaoItem.tipo == "item_enxoval",
+            ConfiguracaoItem.nome.notin_(ITENS_OFICIAIS_ENXOVAL)
+        ).update({"ativo": 0}, synchronize_session=False)
+
+        for it_nome in ITENS_OFICIAIS_ENXOVAL:
+            it_exist = db.query(ConfiguracaoItem).filter(
+                ConfiguracaoItem.tipo == "item_enxoval",
+                ConfiguracaoItem.nome == it_nome
+            ).first()
+            if it_exist:
+                it_exist.ativo = 1
+            else:
+                db.add(ConfiguracaoItem(tipo="item_enxoval", nome=it_nome, detalhe="Oficial", ativo=1))
 
         db.commit()
     except Exception as e:
@@ -596,6 +635,11 @@ def listar_configuracoes(tipo: str = Query(None), db: Session = Depends(get_db))
     q = db.query(ConfiguracaoItem).filter(ConfiguracaoItem.ativo == 1)
     if tipo:
         q = q.filter(ConfiguracaoItem.tipo == tipo)
+    if tipo == "item_enxoval":
+        itens = q.all()
+        ordem_map = {nome: i for i, nome in enumerate(ITENS_OFICIAIS_ENXOVAL)}
+        itens = sorted([i for i in itens if i.nome in ordem_map], key=lambda x: ordem_map.get(x.nome, 999))
+        return itens
     itens = q.order_by(ConfiguracaoItem.nome.asc()).all()
     return itens
 
@@ -822,20 +866,8 @@ def obter_relatorio_manutencao(mes_ano: str = Query("Todos"), db: Session = Depe
 # ==============================================================================
 @app.get("/api/relatorios/rouparia/documentos")
 def obter_documentos_rouparia(data: str = Query("01/08/2026"), db: Session = Depends(get_db)):
-    # 1. Obter itens de enxoval padrão
-    itens_db = db.query(ConfiguracaoItem).filter(ConfiguracaoItem.tipo == "item_enxoval", ConfiguracaoItem.ativo == 1).order_by(ConfiguracaoItem.id.asc()).all()
-    itens_padrao = [
-        "Lençol Paciente", "Lençol de Maca", "Travessa", "Calça Privativa", "Camisa Privativa",
-        "Roupa Privativa (Kit)", "Capote", "Campo Simples P (40x40)", "Campo Simples P (50x50)",
-        "Campo Simples M (80x80)", "Campo Simples G (1,20x1,20)", "Campo Duplo P (50x50)",
-        "Campo Duplo M (80x80)", "Campo Duplo G (1,20x1,20)", "Campo Fenestrado P",
-        "Campo Fenestrado M (80x80)", "Campo Fenestrado G (1,20x1,20)", "Campo Fenestrado G (1,60x1,60)",
-        "Saco Hamper", "Pano de Biombo"
-    ]
-    itens_nomes = [i.nome for i in itens_db if i.nome and not i.nome.startswith("Relatório")] if itens_db else itens_padrao
-    for p in itens_padrao:
-        if not any(p.lower() == x.lower() for x in itens_nomes):
-            itens_nomes.append(p)
+    # 1. Obter itens de enxoval oficiais (estritamente os 20 itens oficiais da planilha física)
+    itens_nomes = ITENS_OFICIAIS_ENXOVAL
 
     # 2. Datas disponíveis na base de Rouparia
     datas_brutas = db.query(Rouparia.data).distinct().all()
@@ -2234,34 +2266,42 @@ def painel_principal():
                 </div>
 
                 <!-- SUB-VISÃO 3: PLANILHA DE ENXOVAL ENTREGUE NAS ÁREAS (IMAGEM 2) -->
-                <div id="subview-rel-enxoval" class="space-y-6 hidden">
-                    <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-5" id="printableEnxovalEntregue">
+                <div id="subview-rel-enxoval" class="space-y-4 hidden">
+                    <div class="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm space-y-3" id="printableEnxovalEntregue">
                         <!-- Cabeçalho Oficial DOC 01 -->
-                        <div class="border-b-2 border-slate-800 pb-4 flex flex-wrap justify-between items-center gap-4">
-                            <div class="flex items-center gap-3">
-                                <div class="w-12 h-12 bg-amber-600 rounded-xl flex items-center justify-center text-white text-xl font-black shadow-sm">
+                        <div class="border-b-2 border-slate-900 pb-2 flex flex-wrap justify-between items-center gap-2">
+                            <div class="flex items-center gap-2.5">
+                                <div class="w-10 h-10 bg-amber-500 rounded-xl flex items-center justify-center text-white text-lg font-black shadow-sm">
                                     📦
                                 </div>
                                 <div>
-                                    <span class="text-[11px] font-black uppercase text-amber-700 tracking-wider block">Prefeitura de São Luís • SEMUS</span>
-                                    <h2 class="text-lg font-black text-slate-900 uppercase tracking-tight">Planilha de Enxoval Entregue nas Áreas</h2>
-                                    <p class="text-[11px] text-slate-500 font-bold">Secretaria Municipal de Saúde • Pronto Socorro do Anil (PS Anil)</p>
+                                    <span class="text-[10px] font-black uppercase text-amber-800 tracking-wider block">Prefeitura Municipal de São Luís • SEMUS</span>
+                                    <h2 class="text-base font-black text-slate-900 uppercase tracking-tight leading-tight">Planilha de Enxoval Entregue nas Áreas</h2>
+                                    <p class="text-[10px] text-slate-500 font-bold">Secretaria Municipal de Saúde • Pronto Socorro do Anil (PS Anil)</p>
                                 </div>
                             </div>
-                            <div class="text-right">
-                                <span class="block text-[11px] font-extrabold text-slate-700">DOC Nº: SEMUS/SUPDAM /Plan.Enx.Entr.Áreas./ 01</span>
-                                <span class="text-xs font-black text-blue-900" id="enxovalDataRef">DATA: 01/08/2026</span>
+                            <div class="text-right text-[10px]">
+                                <span class="block font-extrabold text-slate-700">DOC Nº: SEMUS/SUPDAM /Plan.Enx.Entr.Áreas./ 01</span>
+                                <div class="flex items-center justify-end gap-2 mt-0.5">
+                                    <span class="text-slate-500 font-semibold">Unidade: PS Anil</span>
+                                    <span class="font-black text-blue-900 bg-blue-50 px-2 py-0.5 rounded border border-blue-200" id="enxovalDataRef">DATA: 01/08/2026</span>
+                                </div>
                             </div>
                         </div>
 
-                        <div class="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs">
-                            <span class="font-bold text-slate-600 uppercase text-[10px]">Assinatura e Matrícula do Responsável pela Entrega:</span>
-                            <span class="ml-2 italic text-slate-800">________________________________________________</span>
+                        <!-- Assinatura do Responsável pela Entrega -->
+                        <div class="px-3 py-1.5 bg-slate-50 rounded-lg border border-slate-200 text-[10px] flex justify-between items-center">
+                            <div>
+                                <span class="font-bold text-slate-700 uppercase text-[9px]">Assinatura e Matrícula do Responsável pela Entrega do Enxoval:</span>
+                                <span class="ml-2 italic text-slate-800">____________________________________________________________</span>
+                            </div>
                         </div>
 
-                        <!-- Os 4 Quadrantes de Setores (Grid 2x2) -->
-                        <div id="containerQuadrantesEnxoval" class="grid grid-cols-1 md:grid-cols-2 gap-5">
-                            <!-- Gerado dinamicamente com os 4 setores que receberam enxoval -->
+                        <!-- Os 4 Quadros Lado a Lado (Grid 4 Colunas para caber na folha A4) -->
+                        <div class="w-full overflow-x-auto pb-1">
+                            <div id="containerQuadrantesEnxoval" class="grid grid-cols-4 gap-2 min-w-[760px] lg:min-w-0" style="display: grid !important; grid-template-columns: repeat(4, minmax(0, 1fr)) !important;">
+                                <!-- Gerado dinamicamente com os 4 quadros lado a lado -->
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -3723,17 +3763,18 @@ def painel_principal():
                 }
             }
 
-            // Renderizar Enxoval Entregue nas Áreas (Imagem 2)
+            // Renderizar Enxoval Entregue nas Áreas (Imagem 2) - 4 Quadros Lado a Lado
             function renderizarEnxovalEntregue(entregas, itensNomes) {
                 const container = document.getElementById('containerQuadrantesEnxoval');
                 if (!container) return;
                 container.innerHTML = '';
 
+                // Cores idênticas aos 4 quadrantes da planilha oficial física
                 const cores = [
-                    { border: 'border-amber-400', bg: 'bg-amber-500', text: 'text-amber-950', light: 'bg-amber-50' },
-                    { border: 'border-yellow-400', bg: 'bg-yellow-400', text: 'text-yellow-950', light: 'bg-yellow-50' },
-                    { border: 'border-cyan-400', bg: 'bg-cyan-600', text: 'text-cyan-950', light: 'bg-cyan-50' },
-                    { border: 'border-emerald-400', bg: 'bg-emerald-600', text: 'text-emerald-950', light: 'bg-emerald-50' }
+                    { border: 'border-amber-500', headerBg: 'bg-amber-500', headerText: 'text-amber-950', theadBg: 'bg-amber-400', theadText: 'text-amber-950' },
+                    { border: 'border-yellow-400', headerBg: 'bg-yellow-400', headerText: 'text-yellow-950', theadBg: 'bg-yellow-300', theadText: 'text-yellow-950' },
+                    { border: 'border-cyan-500', headerBg: 'bg-cyan-500', headerText: 'text-cyan-950', theadBg: 'bg-cyan-400', theadText: 'text-cyan-950' },
+                    { border: 'border-emerald-500', headerBg: 'bg-emerald-500', headerText: 'text-emerald-950', theadBg: 'bg-emerald-400', theadText: 'text-emerald-950' }
                 ];
 
                 const listaSetores = [...entregas];
@@ -3754,37 +3795,38 @@ def painel_principal():
                     itensNomes.forEach(it => {
                         const qtd = sec.itens[it] || 0;
                         rowsHtml += `
-                            <tr class="hover:bg-slate-50">
-                                <td class="p-1.5 border-r border-slate-200 text-slate-800 text-[11px] font-medium">${it}</td>
-                                <td class="p-1.5 text-center font-bold text-[11px] ${qtd > 0 ? 'text-blue-900 font-black' : 'text-red-500'}">${qtd}</td>
+                            <tr class="border-b border-slate-300">
+                                <td class="px-1 py-0.5 border-r border-slate-300 text-slate-900 text-[8.5px] font-medium truncate max-w-[125px]" title="${it}">${it}</td>
+                                <td class="px-1 py-0.5 text-center font-bold text-[8.5px] ${qtd > 0 ? 'text-blue-900 bg-blue-50/70 font-black' : 'text-red-500'}">${qtd}</td>
                             </tr>
                         `;
                     });
 
                     container.innerHTML += `
-                        <div class="border-2 ${c.border} rounded-xl overflow-hidden shadow-sm flex flex-col justify-between">
+                        <div class="border-2 ${c.border} rounded-lg overflow-hidden shadow-sm flex flex-col justify-between bg-white text-[9px] w-full">
                             <div>
-                                <div class="${c.bg} text-white p-2.5 flex justify-between items-center text-xs font-bold">
-                                    <span>SETOR: ${sec.setor.toUpperCase()}</span>
-                                    <span>HORÁRIO: ${sec.horario || '__:__'}</span>
+                                <div class="${c.headerBg} ${c.headerText} px-1.5 py-1 font-black text-[9px] border-b border-slate-300">
+                                    <div class="truncate uppercase font-black">SETOR: ${sec.setor.toUpperCase()}</div>
+                                    <div class="flex justify-between items-center text-[8.5px] mt-0.5 font-bold">
+                                        <span>HORÁRIO:</span>
+                                        <span>${sec.horario || '__:__'}</span>
+                                    </div>
                                 </div>
-                                <div class="max-h-80 overflow-y-auto">
-                                    <table class="w-full text-xs text-left border-collapse">
-                                        <thead class="${c.light} ${c.text} font-bold border-b border-slate-200 sticky top-0">
-                                            <tr>
-                                                <th class="p-1.5 border-r border-slate-200">DESCRIMINAÇÃO</th>
-                                                <th class="p-1.5 text-center w-20">QTD</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody class="divide-y divide-slate-100">
-                                            ${rowsHtml}
-                                        </tbody>
-                                    </table>
-                                </div>
+                                <table class="w-full text-left border-collapse">
+                                    <thead class="${c.theadBg} ${c.theadText} font-black text-[8px] border-b border-slate-300">
+                                        <tr>
+                                            <th class="px-1 py-0.5 border-r border-slate-300 uppercase tracking-tight">DESCRIMINAÇÃO</th>
+                                            <th class="px-1 py-0.5 text-center w-7 uppercase">QTD</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${rowsHtml}
+                                    </tbody>
+                                </table>
                             </div>
-                            <div class="p-2.5 bg-slate-50 border-t border-slate-200 text-[11px] font-semibold text-slate-700 flex justify-between items-center">
-                                <span>RESPONSÁVEL PELO RECEBIMENTO:</span>
-                                <span class="italic text-slate-900 font-bold">${sec.responsavel_recebimento || '_______________________'}</span>
+                            <div class="px-1 py-1 bg-slate-50 border-t border-slate-200 text-[8px] font-bold text-slate-700">
+                                <span class="block text-[7px] uppercase text-slate-500">RESPONSÁVEL PELO RECEBIMENTO:</span>
+                                <span class="italic text-slate-900 block truncate mt-0.5">${sec.responsavel_recebimento || '_____________________'}</span>
                             </div>
                         </div>
                     `;
@@ -3834,7 +3876,7 @@ def painel_principal():
             // ===============================================================
             // MOTOR DE IMPRESSÃO OFICIAL (HTML / A4 COM CSS DEDICADO)
             // ===============================================================
-            function imprimirDocumentoHtml(conteudoHtml, titulo) {
+            function imprimirDocumentoHtml(conteudoHtml, titulo, orientacao = 'portrait') {
                 const frame = document.createElement('iframe');
                 frame.style.position = 'fixed';
                 frame.style.right = '0';
@@ -3844,13 +3886,22 @@ def painel_principal():
                 frame.style.border = '0';
                 document.body.appendChild(frame);
 
+                const pageSize = orientacao === 'landscape' ? 'A4 landscape' : 'A4 portrait';
                 const doc = frame.contentWindow.document;
                 doc.open();
                 doc.write('<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8">' +
                     '<title>' + (titulo || 'Documento Oficial - SEMUS / PS ANIL') + '</title>' +
                     '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css">' +
-                    '<style>@page { size: A4; margin: 12mm 10mm; } body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; background: #fff; color: #0f172a; font-size: 11px; line-height: 1.3; } table { width: 100%; border-collapse: collapse; } th, td { border: 1px solid #cbd5e1; padding: 4px 6px; } .no-print { display: none !important; } @media print { body { print-color-adjust: exact; -webkit-print-color-adjust: exact; } }</style>' +
-                    '</head><body class="p-2">' + conteudoHtml + '</body></html>');
+                    '<style>' +
+                    '@page { size: ' + pageSize + '; margin: 4mm 5mm; } ' +
+                    'body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; background: #fff; color: #0f172a; font-size: 9px; line-height: 1.15; } ' +
+                    'table { width: 100%; border-collapse: collapse; } ' +
+                    'th, td { border: 1px solid #cbd5e1; padding: 1px 3px; } ' +
+                    '.no-print { display: none !important; } ' +
+                    '#containerQuadrantesEnxoval { display: grid !important; grid-template-columns: repeat(4, 1fr) !important; gap: 6px !important; width: 100% !important; } ' +
+                    '@media print { body { print-color-adjust: exact; -webkit-print-color-adjust: exact; } }' +
+                    '</style>' +
+                    '</head><body class="p-1">' + conteudoHtml + '</body></html>');
                 doc.close();
 
                 setTimeout(() => {
@@ -3886,7 +3937,7 @@ def painel_principal():
                     if (el) imprimirDocumentoHtml(el.innerHTML, 'Relatorio-Diario-Rouparia-PS-ANIL');
                 } else if (subAbaRelatorioAtiva === 'rouparia_enxoval') {
                     const el = document.getElementById('printableEnxovalEntregue');
-                    if (el) imprimirDocumentoHtml(el.innerHTML, 'Planilha-Enxoval-Entregue-PS-ANIL');
+                    if (el) imprimirDocumentoHtml(el.innerHTML, 'Planilha-Enxoval-Entregue-PS-ANIL', 'landscape');
                 } else if (subAbaRelatorioAtiva === 'rouparia_peso') {
                     const el = document.getElementById('printablePesoSujo');
                     if (el) imprimirDocumentoHtml(el.innerHTML, 'Planilha-Peso-Enxoval-Sujo-PS-ANIL');
