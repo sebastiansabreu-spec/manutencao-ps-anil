@@ -185,7 +185,7 @@ class ManutencaoCreate(BaseModel):
     tipo_manutencao: str = "Corretiva"
     item: str
     setor: str
-    descricao: str
+    descricao: str = ""
     quantidade: float = 1.0
     numero_chamado: str = ""
     responsavel_entrega: str = ""
@@ -234,7 +234,7 @@ class ManutencaoUpdate(BaseModel):
     tipo_manutencao: str = "Corretiva"
     item: str
     setor: str
-    descricao: str
+    descricao: str = ""
     quantidade: float = 1.0
     numero_chamado: str = ""
     responsavel_entrega: str = ""
@@ -1668,8 +1668,8 @@ def painel_principal():
                         </div>
 
                         <div>
-                            <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Descrição / Especificação (se necessário) *</label>
-                            <textarea id="manutDescricao" rows="2" placeholder="Ex: Conserto da porta de vidro da recepção, troca de bocal de tomada..." class="w-full text-xs border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500" required></textarea>
+                            <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Descrição / Especificação (se necessário)</label>
+                            <textarea id="manutDescricao" rows="2" placeholder="Ex: Conserto da porta de vidro da recepção, troca de bocal de tomada..." class="w-full text-xs border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500"></textarea>
                         </div>
 
                         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -2910,8 +2910,8 @@ def painel_principal():
                         </div>
                     </div>
                     <div>
-                        <label class="block font-bold text-slate-700 uppercase mb-1">Descrição / Especificação *</label>
-                        <textarea id="editManutDescricao" rows="2" class="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500" required></textarea>
+                        <label class="block font-bold text-slate-700 uppercase mb-1">Descrição / Especificação</label>
+                        <textarea id="editManutDescricao" rows="2" class="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500"></textarea>
                     </div>
                     <div class="grid grid-cols-2 gap-3">
                         <div>
