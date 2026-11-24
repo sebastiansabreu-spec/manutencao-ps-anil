@@ -4187,42 +4187,53 @@ def painel_principal():
                     if (mRetrabalho && mRetrabalho !== 'Todos') paramsM.append('retrabalho', mRetrabalho);
 
                     const resM = await fetch(`/api/manutencao?${paramsM.toString()}`);
+                    if (!resM.ok) throw new Error('Falha ao obter registros de manutenção');
                     const dadosM = await resM.json();
-                    document.getElementById('contadorManut').textContent = `${dadosM.length} registro(s)`;
                     const tbM = document.getElementById('tabelaManutCorpo');
-                    tbM.innerHTML = '';
-                    dadosM.forEach(r => {
-                        let badgeCor = r.status === 'Concluído' ? 'bg-emerald-100 text-emerald-800' : r.status === 'Ok' ? 'bg-sky-100 text-sky-800' : 'bg-amber-100 text-amber-800';
-                        let badgeRetrabalho = r.retrabalho ? `<span class="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-extrabold bg-amber-100 text-amber-900 border border-amber-300" title="Identificado como Retrabalho">🔄 Retrabalho</span>` : '';
-                        let badgeEditado = (r.observacoes && r.observacoes.includes('[Editado em')) ? `<span class="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200" title="Item com alteração registrada">✏️ Editado</span>` : '';
-                        tbM.innerHTML += `
-                            <tr class="hover:bg-slate-50 transition">
-                                <td class="p-3 text-center font-bold text-slate-500">${r.codigo_id || r.id}</td>
-                                <td class="p-3 whitespace-nowrap">${r.data}</td>
-                                <td class="p-3">${r.turno}</td>
-                                <td class="p-3">${r.categoria}</td>
-                                <td class="p-3 font-semibold">${r.tipo_manutencao}${badgeRetrabalho}${badgeEditado}</td>
-                                <td class="p-3 font-bold text-slate-900">${r.item}</td>
-                                <td class="p-3">${r.setor}</td>
-                                <td class="p-3 font-bold text-center">${r.quantidade}</td>
-                                <td class="p-3 text-center"><span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${badgeCor}">${r.status}</span></td>
-                                <td class="p-3 text-center">
-                                    <div class="flex items-center justify-center gap-1.5">
-                                        <button onclick="abrirModalVisualizarManut(${r.id})" class="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition" title="Visualizar todos os detalhes deste chamado">
-                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
-                                        </button>
-                                        <button onclick="abrirModalEditarManut(${r.id})" class="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition" title="Editar este chamado">
-                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
-                                        </button>
-                                        <button onclick="excluirManutencao(${r.id})" class="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition" title="Excluir">
-                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                                        </button>
-                                    </div>
-                                </td>
-                            </tr>
-                        `;
-                    });
-                } catch(e) {}
+                    
+                    if (Array.isArray(dadosM)) {
+                        document.getElementById('contadorManut').textContent = `${dadosM.length} registro(s)`;
+                        let htmlM = '';
+                        if (dadosM.length === 0) {
+                            htmlM = `<tr><td colspan="10" class="p-4 text-center text-slate-400 italic">Nenhum registro de manutenção encontrado para os filtros selecionados.</td></tr>`;
+                        } else {
+                            dadosM.forEach(r => {
+                                let badgeCor = r.status === 'Concluído' ? 'bg-emerald-100 text-emerald-800' : r.status === 'Ok' ? 'bg-sky-100 text-sky-800' : 'bg-amber-100 text-amber-800';
+                                let badgeRetrabalho = r.retrabalho ? `<span class="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-extrabold bg-amber-100 text-amber-900 border border-amber-300" title="Identificado como Retrabalho">🔄 Retrabalho</span>` : '';
+                                let badgeEditado = (r.observacoes && typeof r.observacoes === 'string' && r.observacoes.includes('[Editado em')) ? `<span class="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200" title="Item com alteração registrada">✏️ Editado</span>` : '';
+                                htmlM += `
+                                    <tr class="hover:bg-slate-50 transition">
+                                        <td class="p-3 text-center font-bold text-slate-500">${r.codigo_id || r.id}</td>
+                                        <td class="p-3 whitespace-nowrap">${r.data || '-'}</td>
+                                        <td class="p-3">${r.turno || '-'}</td>
+                                        <td class="p-3">${r.categoria || '-'}</td>
+                                        <td class="p-3 font-semibold">${r.tipo_manutencao || '-'}${badgeRetrabalho}${badgeEditado}</td>
+                                        <td class="p-3 font-bold text-slate-900">${r.item || '-'}</td>
+                                        <td class="p-3">${r.setor || '-'}</td>
+                                        <td class="p-3 font-bold text-center">${r.quantidade || 1}</td>
+                                        <td class="p-3 text-center"><span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${badgeCor}">${r.status || '-'}</span></td>
+                                        <td class="p-3 text-center">
+                                            <div class="flex items-center justify-center gap-1.5">
+                                                <button onclick="abrirModalVisualizarManut(${r.id})" class="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition" title="Visualizar todos os detalhes deste chamado">
+                                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
+                                                </button>
+                                                <button onclick="abrirModalEditarManut(${r.id})" class="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition" title="Editar este chamado">
+                                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                                                </button>
+                                                <button onclick="excluirManutencao(${r.id})" class="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition" title="Excluir">
+                                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                `;
+                            });
+                        }
+                        tbM.innerHTML = htmlM;
+                    }
+                } catch(e) {
+                    console.error('Erro ao carregar histórico de manutenção:', e);
+                }
 
                 // Rouparia
                 try {
@@ -4235,40 +4246,53 @@ def painel_principal():
                     if (rTurno && rTurno !== 'Todos') paramsR.append('turno', rTurno);
 
                     const resR = await fetch(`/api/rouparia?${paramsR.toString()}`);
+                    if (!resR.ok) throw new Error('Falha ao obter registros de rouparia');
                     const dadosR = await resR.json();
-                    document.getElementById('contadorRoupa').textContent = `${dadosR.length} registro(s)`;
                     const tbR = document.getElementById('tabelaRoupaCorpo');
-                    tbR.innerHTML = '';
-                    dadosR.forEach(r => {
-                        let badgeEditadoR = (r.inconformidade && r.inconformidade.includes('[Editado em')) ? `<span class="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200" title="Item com alteração registrada">✏️ Editado</span>` : '';
-                        tbR.innerHTML += `
-                            <tr class="hover:bg-slate-50 transition">
-                                <td class="p-3 text-center font-bold text-slate-500">${r.codigo_id || r.id}</td>
-                                <td class="p-3 whitespace-nowrap">${r.data}</td>
-                                <td class="p-3">${r.turno}</td>
-                                <td class="p-3 font-semibold text-blue-900">${r.tipo_registro}${badgeEditadoR}</td>
-                                <td class="p-3 font-bold text-slate-900">${r.item_enxoval}</td>
-                                <td class="p-3">${r.setor}</td>
-                                <td class="p-3 font-bold text-center">${r.qtd_pecas}</td>
-                                <td class="p-3 text-center">${r.peso_kg > 0 ? r.peso_kg.toFixed(2) + ' kg' : '-'}</td>
-                                <td class="p-3">${r.responsavel_unidade || '-'}</td>
-                                <td class="p-3 text-center">
-                                    <div class="flex items-center justify-center gap-1.5">
-                                        <button onclick="abrirModalVisualizarRoupa(${r.id})" class="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition" title="Visualizar todos os detalhes desta movimentação">
-                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
-                                        </button>
-                                        <button onclick="abrirModalEditarRoupa(${r.id})" class="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition" title="Editar esta movimentação">
-                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
-                                        </button>
-                                        <button onclick="excluirRouparia(${r.id})" class="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition" title="Excluir">
-                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                                        </button>
-                                    </div>
-                                </td>
-                            </tr>
-                        `;
-                    });
-                } catch(e) {}
+
+                    if (Array.isArray(dadosR)) {
+                        document.getElementById('contadorRoupa').textContent = `${dadosR.length} registro(s)`;
+                        let htmlR = '';
+                        if (dadosR.length === 0) {
+                            htmlR = `<tr><td colspan="10" class="p-4 text-center text-slate-400 italic">Nenhum registro de rouparia encontrado para os filtros selecionados.</td></tr>`;
+                        } else {
+                            dadosR.forEach(r => {
+                                let badgeEditadoR = (r.inconformidade && typeof r.inconformidade === 'string' && r.inconformidade.includes('[Editado em')) ? `<span class="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200" title="Item com alteração registrada">✏️ Editado</span>` : '';
+                                const pVal = parseFloat(r.peso_kg) || 0;
+                                const pesoFmt = pVal > 0 ? `${pVal.toFixed(2)} kg` : '-';
+                                htmlR += `
+                                    <tr class="hover:bg-slate-50 transition">
+                                        <td class="p-3 text-center font-bold text-slate-500">${r.codigo_id || r.id}</td>
+                                        <td class="p-3 whitespace-nowrap">${r.data || '-'}</td>
+                                        <td class="p-3">${r.turno || '-'}</td>
+                                        <td class="p-3 font-semibold text-blue-900">${r.tipo_registro || '-'}${badgeEditadoR}</td>
+                                        <td class="p-3 font-bold text-slate-900">${r.item_enxoval || '-'}</td>
+                                        <td class="p-3">${r.setor || '-'}</td>
+                                        <td class="p-3 font-bold text-center">${r.qtd_pecas || 0}</td>
+                                        <td class="p-3 text-center">${pesoFmt}</td>
+                                        <td class="p-3">${r.responsavel_unidade || '-'}</td>
+                                        <td class="p-3 text-center">
+                                            <div class="flex items-center justify-center gap-1.5">
+                                                <button onclick="abrirModalVisualizarRoupa(${r.id})" class="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition" title="Visualizar todos os detalhes desta movimentação">
+                                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
+                                                </button>
+                                                <button onclick="abrirModalEditarRoupa(${r.id})" class="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition" title="Editar esta movimentação">
+                                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                                                </button>
+                                                <button onclick="excluirRouparia(${r.id})" class="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition" title="Excluir">
+                                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                `;
+                            });
+                        }
+                        tbR.innerHTML = htmlR;
+                    }
+                } catch(e) {
+                    console.error('Erro ao carregar histórico de rouparia:', e);
+                }
             }
 
             function filtrarHistoricoComDebounce() {
