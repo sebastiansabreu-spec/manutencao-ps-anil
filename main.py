@@ -97,7 +97,7 @@ class Rouparia(Base):
     mes_ano = Column(String, index=True) # MM/YYYY
     horario = Column(String, default="")
     turno = Column(String, default="Matutino")
-    tipo_registro = Column(String, index=True) # Estoque, Recolhimento Sujo, Entrega aos Setores, Devolução
+    tipo_registro = Column(String, index=True) # Recebidos Limpo, Estoque, Recolhimento Sujo, Entrega aos Setores, Devolução
     item_enxoval = Column(String, index=True)
     setor = Column(String, index=True) # Destino / Origem
     qtd_pecas = Column(Float, default=0.0)
@@ -757,7 +757,7 @@ def obter_consolidado(mes_ano: str = Query("Todos"), db: Session = Depends(get_d
     enxoval_sujo_kg = sum(r.peso_kg or 0.0 for r in rouparias if r.tipo_registro == "Recolhimento Sujo")
     
     # c) Total de Enxoval Limpo Recebido (KG)
-    enxoval_limpo_kg = sum(r.peso_kg or 0.0 for r in rouparias if r.tipo_registro in ["Estoque", "Recebimento Limpo"])
+    enxoval_limpo_kg = sum(r.peso_kg or 0.0 for r in rouparias if (r.tipo_registro or "").strip().lower() in ["estoque", "recebimento limpo", "recebidos limpo", "recebido limpo", "recebido lavanderia", "recebimento"])
     
     # d) Devoluções por Não Conformidade (KG / Peças)
     devolucoes = sum(r.qtd_pecas or 0.0 for r in rouparias if r.tipo_registro == "Devolução" or (r.inconformidade and r.inconformidade.strip()))
@@ -898,7 +898,7 @@ def obter_documentos_rouparia(data: str = Query("01/08/2026"), db: Session = Dep
         if it_key not in estoque_map:
             estoque_map[it_key] = 0
         tipo = (r.tipo_registro or "").strip().lower()
-        if tipo in ["recebido lavanderia", "estoque", "recebimento"]:
+        if tipo in ["recebido lavanderia", "estoque", "recebimento", "recebidos limpo", "recebimento limpo", "recebido limpo"]:
             estoque_map[it_key] += int(r.qtd_pecas or 0)
         elif tipo in ["entrega aos setores", "entrega setor"]:
             estoque_map[it_key] -= int(r.qtd_pecas or 0)
@@ -907,7 +907,7 @@ def obter_documentos_rouparia(data: str = Query("01/08/2026"), db: Session = Dep
     recebidos_dia = {it: 0 for it in itens_nomes}
     for r in registros_dia:
         tipo = (r.tipo_registro or "").strip().lower()
-        if tipo in ["recebido lavanderia", "recebimento"]:
+        if tipo in ["recebido lavanderia", "recebimento", "recebidos limpo", "recebimento limpo", "recebido limpo"]:
             it = (r.item_enxoval or "").strip()
             it_key = next((x for x in itens_nomes if x.lower() == it.lower()), it)
             recebidos_dia[it_key] = recebidos_dia.get(it_key, 0) + int(r.qtd_pecas or 0)
@@ -1761,6 +1761,7 @@ def painel_principal():
                             <div>
                                 <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Tipo de Movimentação *</label>
                                 <select id="roupaTipo" class="w-full text-xs border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 font-semibold" required>
+                                    <option value="Recebidos Limpo">Recebidos Limpo</option>
                                     <option value="Estoque">Estoque</option>
                                     <option value="Recolhimento Sujo">Recolhimento Sujo</option>
                                     <option value="Entrega aos Setores">Entrega aos Setores</option>
@@ -2470,6 +2471,7 @@ def painel_principal():
                             <label class="block font-bold text-slate-600 text-[10px] uppercase mb-1">Tipo de Movimentação</label>
                             <select id="filtroRoupaTipo" onchange="carregarHistorico()" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-semibold focus:ring-2 focus:ring-blue-500 cursor-pointer">
                                 <option value="Todos">Todos os Tipos</option>
+                                <option value="Recebidos Limpo">Recebidos Limpo</option>
                                 <option value="Estoque">Estoque</option>
                                 <option value="Recolhimento Sujo">Recolhimento Sujo</option>
                                 <option value="Entrega aos Setores">Entrega aos Setores</option>
@@ -3006,6 +3008,7 @@ def painel_principal():
                         <div>
                             <label class="block font-bold text-slate-700 uppercase mb-1">Tipo de Movimentação *</label>
                             <select id="editRoupaTipo" class="w-full border border-slate-300 rounded-lg p-2.5 font-bold focus:ring-2 focus:ring-blue-500">
+                                <option value="Recebidos Limpo">Recebidos Limpo</option>
                                 <option value="Estoque">Estoque</option>
                                 <option value="Recolhimento Sujo">Recolhimento Sujo</option>
                                 <option value="Entrega aos Setores">Entrega aos Setores</option>
