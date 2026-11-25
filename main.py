@@ -32,7 +32,8 @@ if os.path.exists(".env"):
     except Exception:
         pass
 
-SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./hospital.db")
+_default_sqlite = "/tmp/hospital.db" if os.environ.get("VERCEL") else "./hospital.db"
+SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{_default_sqlite}")
 if SQLALCHEMY_DATABASE_URL.startswith("postgres://"):
     SQLALCHEMY_DATABASE_URL = SQLALCHEMY_DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
@@ -56,8 +57,9 @@ try:
         pass
     print("✅ Conectado ao banco de dados com sucesso!")
 except Exception as e:
-    print(f"⚠️ Atenção: Falha ao conectar ao banco remoto. Usando SQLite local (hospital.db). Detalhe: {e}")
-    SQLALCHEMY_DATABASE_URL = "sqlite:///./hospital.db"
+    _fallback_sqlite = "/tmp/hospital.db" if os.environ.get("VERCEL") else "./hospital.db"
+    print(f"⚠️ Atenção: Falha ao conectar ao banco remoto. Usando SQLite local ({_fallback_sqlite}). Detalhe: {e}")
+    SQLALCHEMY_DATABASE_URL = f"sqlite:///{_fallback_sqlite}"
     engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
