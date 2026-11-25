@@ -1430,6 +1430,8 @@ async def importar_planilha_excel(arquivo: UploadFile = File(...), db: Session =
 # 7. FRONT-END INTERATIVO (SPA COMPLETA COM 5 ABAS E DESIGN OFICIAL)
 # ==============================================================================
 @app.get("/", response_class=HTMLResponse)
+@app.get("/api/index.py", response_class=HTMLResponse)
+@app.get("/api/index", response_class=HTMLResponse)
 def painel_principal():
     return """
     <!DOCTYPE html>
