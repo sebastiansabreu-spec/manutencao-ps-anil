@@ -2005,51 +2005,68 @@ def painel_principal():
                         <span class="px-2.5 py-1 bg-blue-100 text-blue-900 font-bold rounded-lg text-xs" id="badgeTotalChamadosRel">-</span>
                     </div>
 
-                    <!-- LINHA 1: STATUS & CATEGORIAS (GRÁFICOS E TABELAS) -->
-                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                        <!-- Status / Situação -->
-                        <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-                            <h3 class="text-xs font-extrabold text-slate-700 uppercase tracking-wider border-b pb-2">Status / Situação das Manutenções</h3>
-                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
-                                <div class="h-56">
-                                    <canvas id="chartStatus"></canvas>
-                                </div>
-                                <div class="overflow-hidden border border-slate-200 rounded-xl">
-                                    <table class="w-full text-xs text-left">
-                                        <thead class="bg-slate-50 text-slate-700 font-bold border-b">
-                                            <tr>
-                                                <th class="p-2.5">Status / Situação</th>
-                                                <th class="p-2.5 text-right">Qtd</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody id="tabelaRelatorioStatus" class="divide-y divide-slate-100">
-                                            <!-- Dinâmico -->
-                                        </tbody>
-                                    </table>
-                                </div>
+                    <!-- LINHA 1: STATUS / SITUAÇÃO DAS MANUTENÇÕES -->
+                    <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                        <div class="flex justify-between items-center border-b pb-2">
+                            <h3 class="text-xs font-extrabold text-slate-700 uppercase tracking-wider">Status / Situação das Manutenções</h3>
+                            <span class="text-[11px] text-slate-500 font-medium">Proporção e total por situação</span>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 items-center max-w-3xl">
+                            <div class="h-56">
+                                <canvas id="chartStatus"></canvas>
+                            </div>
+                            <div class="overflow-hidden border border-slate-200 rounded-xl shadow-xs">
+                                <table class="w-full text-xs text-left">
+                                    <thead class="bg-slate-50 text-slate-700 font-bold border-b">
+                                        <tr>
+                                            <th class="p-2.5">Status / Situação</th>
+                                            <th class="p-2.5 text-right">Qtd</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="tabelaRelatorioStatus" class="divide-y divide-slate-100">
+                                        <!-- Dinâmico -->
+                                    </tbody>
+                                </table>
                             </div>
                         </div>
+                    </div>
 
-                        <!-- Manutenções por Categoria -->
-                        <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-                            <h3 class="text-xs font-extrabold text-slate-700 uppercase tracking-wider border-b pb-2">Manutenções por Categoria</h3>
-                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
-                                <div class="h-56">
-                                    <canvas id="chartCategoria"></canvas>
-                                </div>
-                                <div class="overflow-y-auto max-h-56 border border-slate-200 rounded-xl">
-                                    <table class="w-full text-xs text-left">
-                                        <thead class="bg-slate-50 text-slate-700 font-bold border-b sticky top-0">
-                                            <tr>
-                                                <th class="p-2.5">Categoria</th>
-                                                <th class="p-2.5 text-right">Qtd</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody id="tabelaRelatorioCategoria" class="divide-y divide-slate-100">
-                                            <!-- Dinâmico -->
-                                        </tbody>
-                                    </table>
-                                </div>
+                    <!-- LINHA 2: MANUTENÇÕES POR CATEGORIA (ESTENDIDO COMPLETO) -->
+                    <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-5">
+                        <div class="flex flex-wrap justify-between items-center border-b pb-3 gap-2">
+                            <div>
+                                <h3 class="text-sm font-extrabold text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                                    <span>📊</span> MANUTENÇÕES POR CATEGORIA
+                                </h3>
+                                <p class="text-xs text-slate-500">Gráfico estendido com todas as categorias, identificação colorida individual e rótulos de dados</p>
+                            </div>
+                            <span id="badgeTotalCategorias" class="text-xs font-extrabold bg-blue-100 text-blue-900 px-3.5 py-1.5 rounded-full border border-blue-200 shadow-xs">
+                                Categorias
+                            </span>
+                        </div>
+
+                        <!-- Gráfico Estendido -->
+                        <div class="w-full h-80 sm:h-96">
+                            <canvas id="chartCategoria"></canvas>
+                        </div>
+
+                        <!-- Tabela Detalhada com Legenda das Cores e Percentuais -->
+                        <div class="border-t border-slate-100 pt-4">
+                            <h4 class="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2.5">Detalhamento Quantitativo por Categoria</h4>
+                            <div class="overflow-x-auto border border-slate-200 rounded-xl max-h-64 overflow-y-auto">
+                                <table class="w-full text-xs text-left">
+                                    <thead class="bg-slate-100 text-slate-800 font-extrabold border-b sticky top-0 z-10">
+                                        <tr>
+                                            <th class="p-2.5 w-14 text-center">Cor</th>
+                                            <th class="p-2.5">Categoria do Serviço</th>
+                                            <th class="p-2.5 text-right">Qtd de Chamados</th>
+                                            <th class="p-2.5 text-right">Participação (%)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="tabelaRelatorioCategoria" class="divide-y divide-slate-100">
+                                        <!-- Dinâmico -->
+                                    </tbody>
+                                </table>
                             </div>
                         </div>
                     </div>
@@ -3489,15 +3506,65 @@ def painel_principal():
                     tbCat.innerHTML = '';
                     const catLabels = Object.keys(d.categorias);
                     const catData = Object.values(d.categorias);
+                    const totalCatQtd = catData.reduce((acc, v) => acc + (parseFloat(v) || 0), 0);
 
-                    catLabels.forEach(c => {
+                    // Paleta rica de cores modernas e distintas para cada categoria
+                    const PALETA_CORES = [
+                        '#2563eb', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444', 
+                        '#06b6d4', '#ec4899', '#f97316', '#14b8a6', '#6366f1', 
+                        '#84cc16', '#a855f7', '#e11d48', '#0284c7', '#d97706', 
+                        '#059669', '#7c3aed', '#dc2626', '#475569', '#0d9488',
+                        '#3b82f6', '#16a34a', '#eab308', '#9333ea', '#ea580c'
+                    ];
+
+                    const bgColors = catLabels.map((_, i) => PALETA_CORES[i % PALETA_CORES.length]);
+
+                    // Preencher badge do total
+                    const badgeCat = document.getElementById('badgeTotalCategorias');
+                    if (badgeCat) {
+                        badgeCat.textContent = `${catLabels.length} Categorias • ${totalCatQtd} Chamados`;
+                    }
+
+                    // Preencher tabela com amostra de cor, categoria, quantidade e percentual
+                    tbCat.innerHTML = '';
+                    catLabels.forEach((c, idx) => {
+                        const cor = bgColors[idx];
+                        const qtd = d.categorias[c] || 0;
+                        const pct = totalCatQtd > 0 ? ((qtd / totalCatQtd) * 100).toFixed(1) : '0.0';
                         tbCat.innerHTML += `
-                            <tr>
-                                <td class="p-2.5 font-medium text-slate-700">${c}</td>
-                                <td class="p-2.5 text-right font-extrabold text-blue-900">${d.categorias[c]}</td>
+                            <tr class="hover:bg-slate-50 transition">
+                                <td class="p-2.5 text-center">
+                                    <span class="inline-block w-4 h-4 rounded-md shadow-xs border border-white" style="background-color: ${cor}"></span>
+                                </td>
+                                <td class="p-2.5 font-bold text-slate-800">${c}</td>
+                                <td class="p-2.5 text-right font-black text-slate-900 text-sm">${qtd}</td>
+                                <td class="p-2.5 text-right font-bold text-blue-700">${pct}%</td>
                             </tr>
                         `;
                     });
+
+                    // Plugin customizado para desenhar os Rótulos de Dados numéricos no topo de cada barra
+                    const pluginRotulosDados = {
+                        id: 'customDataLabels',
+                        afterDatasetsDraw(chart) {
+                            const { ctx } = chart;
+                            chart.data.datasets.forEach((dataset, datasetIndex) => {
+                                const meta = chart.getDatasetMeta(datasetIndex);
+                                meta.data.forEach((bar, index) => {
+                                    const value = dataset.data[index];
+                                    if (value !== undefined && value !== null && value > 0) {
+                                        ctx.save();
+                                        ctx.font = 'bold 12px "Plus Jakarta Sans", sans-serif';
+                                        ctx.fillStyle = '#0f172a';
+                                        ctx.textAlign = 'center';
+                                        ctx.textBaseline = 'bottom';
+                                        ctx.fillText(value, bar.x, bar.y - 6);
+                                        ctx.restore();
+                                    }
+                                });
+                            });
+                        }
+                    };
 
                     if (chartCategoriaInstance) chartCategoriaInstance.destroy();
                     const ctxCat = document.getElementById('chartCategoria').getContext('2d');
@@ -3506,18 +3573,80 @@ def painel_principal():
                         data: {
                             labels: catLabels,
                             datasets: [{
-                                label: 'Manutenções',
+                                label: 'Quantidade de Manutenções',
                                 data: catData,
-                                backgroundColor: '#1d4ed8',
-                                borderRadius: 4
+                                backgroundColor: bgColors,
+                                borderColor: bgColors,
+                                borderWidth: 1,
+                                borderRadius: 6,
+                                maxBarThickness: 52
                             }]
                         },
                         options: {
                             responsive: true,
                             maintainAspectRatio: false,
-                            plugins: { legend: { display: false } },
-                            scales: { x: { display: false } }
-                        }
+                            layout: {
+                                padding: {
+                                    top: 32, // Espaço extra para o valor acima da barra mais alta
+                                    bottom: 12,
+                                    left: 10,
+                                    right: 15
+                                }
+                            },
+                            plugins: {
+                                legend: { display: false },
+                                tooltip: {
+                                    backgroundColor: '#0f172a',
+                                    padding: 12,
+                                    cornerRadius: 8,
+                                    titleFont: { size: 12, weight: 'bold' },
+                                    bodyFont: { size: 12 },
+                                    callbacks: {
+                                        label: function(context) {
+                                            const val = context.parsed.y;
+                                            const pct = totalCatQtd > 0 ? ((val / totalCatQtd) * 100).toFixed(1) : '0.0';
+                                            return ` Total: ${val} solicitações (${pct}%)`;
+                                        }
+                                    }
+                                }
+                            },
+                            scales: {
+                                x: {
+                                    display: true,
+                                    grid: { display: false },
+                                    ticks: {
+                                        autoSkip: false, // Força a exibição de TODAS as categorias
+                                        maxRotation: 45,
+                                        minRotation: 30,
+                                        font: {
+                                            size: 11,
+                                            weight: '700',
+                                            family: "'Plus Jakarta Sans', sans-serif"
+                                        },
+                                        color: '#334155',
+                                        callback: function(val) {
+                                            const label = this.getLabelForValue(val);
+                                            if (label && label.length > 25) {
+                                                return label.substring(0, 22) + '...';
+                                            }
+                                            return label;
+                                        }
+                                    }
+                                },
+                                y: {
+                                    display: true,
+                                    beginAtZero: true,
+                                    grace: '18%', // 18% de folga no topo para o rótulo não ser cortado
+                                    grid: { color: '#f1f5f9' },
+                                    ticks: {
+                                        font: { size: 11, weight: 'bold' },
+                                        precision: 0,
+                                        color: '#64748b'
+                                    }
+                                }
+                            }
+                        },
+                        plugins: [pluginRotulosDados]
                     });
 
                     // 3. Tabela Ranking Setores
