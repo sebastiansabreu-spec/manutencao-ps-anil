@@ -2116,9 +2116,14 @@ def painel_principal():
 
                     <!-- LINHA 1: STATUS / SITUAÇÃO DAS MANUTENÇÕES -->
                     <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-                        <div class="flex justify-between items-center border-b pb-2">
-                            <h3 class="text-xs font-extrabold text-slate-700 uppercase tracking-wider">Status / Situação das Manutenções</h3>
-                            <span class="text-[11px] text-slate-500 font-medium">Proporção e total por situação</span>
+                        <div class="flex flex-wrap justify-between items-center border-b pb-2 gap-2">
+                            <div>
+                                <h3 class="text-xs font-extrabold text-slate-700 uppercase tracking-wider">Status / Situação das Manutenções</h3>
+                                <span class="text-[11px] text-slate-500 font-medium">Proporção e total por situação</span>
+                            </div>
+                            <button onclick="baixarGraficoComoImagem('chartStatus', 'Grafico-Status-Manutencoes')" title="Baixar gráfico como imagem PNG" class="px-2.5 py-1 text-[11px] font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 hover:text-blue-900 rounded-lg transition flex items-center gap-1 border border-slate-200 shadow-2xs">
+                                <span>📷</span> Baixar Imagem
+                            </button>
                         </div>
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-6 items-center max-w-3xl">
                             <div class="h-56">
@@ -2149,9 +2154,14 @@ def painel_principal():
                                 </h3>
                                 <p class="text-xs text-slate-500">Gráfico estendido com todas as categorias, identificação colorida individual e rótulos de dados</p>
                             </div>
-                            <span id="badgeTotalCategorias" class="text-xs font-extrabold bg-blue-100 text-blue-900 px-3.5 py-1.5 rounded-full border border-blue-200 shadow-xs">
-                                Categorias
-                            </span>
+                            <div class="flex items-center gap-2">
+                                <button onclick="baixarGraficoComoImagem('chartCategoria', 'Grafico-Categorias-Manutencoes')" title="Baixar gráfico como imagem PNG" class="px-3 py-1.5 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-blue-900 rounded-xl transition flex items-center gap-1.5 border border-slate-200 shadow-2xs">
+                                    <span>📷</span> Baixar Imagem
+                                </button>
+                                <span id="badgeTotalCategorias" class="text-xs font-extrabold bg-blue-100 text-blue-900 px-3.5 py-1.5 rounded-full border border-blue-200 shadow-xs">
+                                    Categorias
+                                </span>
+                            </div>
                         </div>
 
                         <!-- Gráfico Estendido -->
@@ -2272,9 +2282,14 @@ def painel_principal():
                                     <p class="text-xs text-slate-500">Volume acumulado de peças por item de rouparia hospitalar</p>
                                 </div>
                             </div>
-                            <span id="badgeTotalItensRoupa" class="px-3 py-1 bg-blue-50 text-blue-800 text-xs font-black rounded-lg border border-blue-200">
-                                0 Itens • 0 Peças
-                            </span>
+                            <div class="flex items-center gap-2">
+                                <button onclick="baixarGraficoComoImagem('chartRoupaItens', 'Grafico-Top-Itens-Rouparia')" title="Baixar gráfico como imagem PNG" class="px-3 py-1.5 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-blue-900 rounded-xl transition flex items-center gap-1.5 border border-slate-200 shadow-2xs">
+                                    <span>📷</span> Baixar Imagem
+                                </button>
+                                <span id="badgeTotalItensRoupa" class="px-3 py-1 bg-blue-50 text-blue-800 text-xs font-black rounded-lg border border-blue-200">
+                                    0 Itens • 0 Peças
+                                </span>
+                            </div>
                         </div>
 
                         <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
@@ -2314,7 +2329,9 @@ def painel_principal():
                                     <span class="text-base">🔄</span>
                                     <h3 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider">Movimentações por Tipo de Operação</h3>
                                 </div>
-                                <span class="text-[11px] text-slate-500 font-semibold">Peças / Lançamentos</span>
+                                <button onclick="baixarGraficoComoImagem('chartRoupaTipos', 'Grafico-Tipos-Movimentacao-Rouparia')" title="Baixar gráfico como imagem PNG" class="px-2 py-1 text-[11px] font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 hover:text-blue-900 rounded-lg transition flex items-center gap-1 border border-slate-200 shadow-2xs">
+                                    <span>📷</span> Baixar Imagem
+                                </button>
                             </div>
                             <div class="w-full relative" style="height: 260px;">
                                 <canvas id="chartRoupaTipos"></canvas>
@@ -2328,7 +2345,9 @@ def painel_principal():
                                     <span class="text-base">⏰</span>
                                     <h3 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider">Distribuição por Turno de Atendimento</h3>
                                 </div>
-                                <span class="text-[11px] text-slate-500 font-semibold">Proporção Operacional</span>
+                                <button onclick="baixarGraficoComoImagem('chartRoupaTurnos', 'Grafico-Turnos-Rouparia')" title="Baixar gráfico como imagem PNG" class="px-2 py-1 text-[11px] font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 hover:text-blue-900 rounded-lg transition flex items-center gap-1 border border-slate-200 shadow-2xs">
+                                    <span>📷</span> Baixar Imagem
+                                </button>
                             </div>
                             <div class="w-full relative" style="height: 260px;">
                                 <canvas id="chartRoupaTurnos"></canvas>
@@ -2345,7 +2364,9 @@ def painel_principal():
                                     <span class="text-base">🏥</span>
                                     <h3 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider">Demanda de Enxoval por Setor / Área</h3>
                                 </div>
-                                <span class="text-[11px] text-slate-500 font-semibold">Top Setores Atendidos</span>
+                                <button onclick="baixarGraficoComoImagem('chartRoupaSetores', 'Grafico-Demanda-Setores-Rouparia')" title="Baixar gráfico como imagem PNG" class="px-2 py-1 text-[11px] font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 hover:text-blue-900 rounded-lg transition flex items-center gap-1 border border-slate-200 shadow-2xs">
+                                    <span>📷</span> Baixar Imagem
+                                </button>
                             </div>
                             <div class="w-full relative" style="height: 300px;">
                                 <canvas id="chartRoupaSetores"></canvas>
@@ -3404,12 +3425,62 @@ def painel_principal():
                 '#3b82f6', '#16a34a', '#eab308', '#9333ea', '#ea580c'
             ];
 
-            // Plugin customizado para desenhar os Rótulos de Dados numéricos (compatível com vertical e horizontal)
+            // Plugin customizado para desenhar os Rótulos de Dados numéricos (compatível com vertical, horizontal e rosca/doughnut)
             const pluginRotulosDados = {
                 id: 'customDataLabels',
                 afterDatasetsDraw(chart) {
                     const { ctx } = chart;
+                    const chartType = chart.config.type;
                     const isHorizontal = chart.config.options && chart.config.options.indexAxis === 'y';
+
+                    // Rótulos para Gráficos de Rosca / Pizza (Doughnut / Pie)
+                    if (chartType === 'doughnut' || chartType === 'pie') {
+                        chart.data.datasets.forEach((dataset, datasetIndex) => {
+                            const meta = chart.getDatasetMeta(datasetIndex);
+                            const total = dataset.data.reduce((acc, v) => acc + (parseFloat(v) || 0), 0);
+                            meta.data.forEach((arc, index) => {
+                                const value = dataset.data[index];
+                                if (value !== undefined && value !== null && value > 0) {
+                                    const angleDiff = Math.abs(arc.endAngle - arc.startAngle);
+                                    // Desenha se a fatia tiver tamanho suficiente
+                                    if (angleDiff > 0.15) {
+                                        let posX, posY;
+                                        if (typeof arc.tooltipPosition === 'function') {
+                                            const pos = arc.tooltipPosition();
+                                            posX = pos.x;
+                                            posY = pos.y;
+                                        } else {
+                                            const midAngle = (arc.startAngle + arc.endAngle) / 2;
+                                            const midRadius = (arc.innerRadius + arc.outerRadius) / 2;
+                                            posX = arc.x + Math.cos(midAngle) * midRadius;
+                                            posY = arc.y + Math.sin(midAngle) * midRadius;
+                                        }
+
+                                        const pct = total > 0 ? Math.round((value / total) * 100) : 0;
+                                        const texto = `${Number(value).toLocaleString('pt-BR')} (${pct}%)`;
+
+                                        ctx.save();
+                                        ctx.font = 'bold 11px "Plus Jakarta Sans", sans-serif';
+                                        ctx.textAlign = 'center';
+                                        ctx.textBaseline = 'middle';
+
+                                        // Sombra de alto contraste para visibilidade sobre qualquer cor
+                                        ctx.shadowColor = 'rgba(0, 0, 0, 0.75)';
+                                        ctx.shadowBlur = 5;
+                                        ctx.shadowOffsetX = 0;
+                                        ctx.shadowOffsetY = 1;
+
+                                        ctx.fillStyle = '#ffffff';
+                                        ctx.fillText(texto, posX, posY);
+                                        ctx.restore();
+                                    }
+                                }
+                            });
+                        });
+                        return;
+                    }
+
+                    // Rótulos para Gráficos de Barras (Vertical e Horizontal)
                     chart.data.datasets.forEach((dataset, datasetIndex) => {
                         const meta = chart.getDatasetMeta(datasetIndex);
                         meta.data.forEach((bar, index) => {
@@ -3433,6 +3504,43 @@ def painel_principal():
                     });
                 }
             };
+
+            // Função para exportar e baixar qualquer gráfico como imagem PNG de alta resolução
+            function baixarGraficoComoImagem(canvasId, nomeArquivo) {
+                const canvas = document.getElementById(canvasId);
+                if (!canvas) {
+                    mostrarToast("Gráfico não encontrado para download", "erro");
+                    return;
+                }
+
+                try {
+                    // Criar um canvas temporário com fundo branco sólido para imagem de alta qualidade
+                    const tempCanvas = document.createElement('canvas');
+                    tempCanvas.width = canvas.width;
+                    tempCanvas.height = canvas.height;
+                    const tempCtx = tempCanvas.getContext('2d');
+
+                    // Preencher fundo branco
+                    tempCtx.fillStyle = '#ffffff';
+                    tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+
+                    // Desenhar o gráfico por cima
+                    tempCtx.drawImage(canvas, 0, 0);
+
+                    // Gerar o link de download automático do PNG
+                    const a = document.createElement('a');
+                    a.download = (nomeArquivo || 'grafico-ps-anil') + '.png';
+                    a.href = tempCanvas.toDataURL('image/png', 1.0);
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+
+                    mostrarToast("Gráfico baixado com sucesso como imagem PNG!");
+                } catch (err) {
+                    console.error("Erro ao baixar imagem do gráfico:", err);
+                    mostrarToast("Erro ao processar imagem para download", "erro");
+                }
+            }
 
             // Funções de formatação e preenchimento de Data e Horário
             function formatarDataIsoHoje() {
@@ -3847,7 +3955,8 @@ def painel_principal():
                             responsive: true,
                             maintainAspectRatio: false,
                             plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 } } } }
-                        }
+                        },
+                        plugins: [pluginRotulosDados]
                     });
 
                     // 2. Tabela e Gráfico de Categorias
@@ -4273,7 +4382,8 @@ def painel_principal():
                                 plugins: {
                                     legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11, weight: 'bold' } } }
                                 }
-                            }
+                            },
+                            plugins: [pluginRotulosDados]
                         });
                     }
 
