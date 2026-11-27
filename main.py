@@ -864,6 +864,112 @@ def obter_relatorio_manutencao(mes_ano: str = Query("Todos"), db: Session = Depe
     }
 
 # ==============================================================================
+# 5.0 INDICADORES E GRÁFICOS ANALÍTICOS DE ROUPARIA
+# ==============================================================================
+@app.get("/api/relatorios/rouparia/graficos")
+def obter_relatorio_rouparia_graficos(mes_ano: str = Query("Todos"), db: Session = Depends(get_db)):
+    # 1. Obter lista de meses disponíveis na base de rouparia
+    meses_brutos = db.query(Rouparia.mes_ano).distinct().all()
+    meses_validos = set()
+    for m in meses_brutos:
+        if m[0] and len(m[0]) == 7 and "/" in m[0]:
+            meses_validos.add(m[0])
+    
+    def parse_mes_br(m_str):
+        try:
+            pts = m_str.split("/")
+            return (int(pts[1]), int(pts[0]))
+        except:
+            return (0, 0)
+    meses_disponiveis = sorted(list(meses_validos), key=parse_mes_br, reverse=True)
+
+    # 2. Consulta filtrada por Mês/Ano
+    q = db.query(Rouparia)
+    if mes_ano != "Todos":
+        q = q.filter(Rouparia.mes_ano == mes_ano)
+    registros = q.all()
+
+    total_registros = len(registros)
+    total_pecas = sum(r.qtd_pecas or 0.0 for r in registros)
+    total_peso_kg = round(sum(r.peso_kg or 0.0 for r in registros), 2)
+    total_hampers = sum(r.qtd_hamper or 0.0 for r in registros)
+
+    # 3. Tipos de Movimentação (contagem de registros e soma de peças/peso)
+    tipos_mov = {}
+    for r in registros:
+        tipo = r.tipo_registro.strip() if r.tipo_registro else "Outros"
+        if tipo not in tipos_mov:
+            tipos_mov[tipo] = {"registros": 0, "pecas": 0.0, "peso_kg": 0.0}
+        tipos_mov[tipo]["registros"] += 1
+        tipos_mov[tipo]["pecas"] += (r.qtd_pecas or 0.0)
+        tipos_mov[tipo]["peso_kg"] = round(tipos_mov[tipo]["peso_kg"] + (r.peso_kg or 0.0), 2)
+
+    # 4. Ranking de Itens de Enxoval (por total de peças e registros)
+    itens_contagem = {}
+    for r in registros:
+        item = r.item_enxoval.strip() if r.item_enxoval else "Não informado"
+        if item not in itens_contagem:
+            itens_contagem[item] = {"pecas": 0.0, "registros": 0}
+        itens_contagem[item]["pecas"] += (r.qtd_pecas or 0.0)
+        itens_contagem[item]["registros"] += 1
+    
+    itens_ranking = [
+        {"item": item, "pecas": int(dados["pecas"]) if dados["pecas"].is_integer() else round(dados["pecas"], 1), "registros": dados["registros"]}
+        for item, dados in sorted(itens_contagem.items(), key=lambda x: (x[1]["pecas"], x[1]["registros"]), reverse=True)
+    ]
+
+    # 5. Demanda por Setor (ranking ordenado)
+    setores_contagem = {}
+    for r in registros:
+        setor = r.setor.strip() if r.setor else "Não informado"
+        if setor not in setores_contagem:
+            setores_contagem[setor] = {"pecas": 0.0, "peso_kg": 0.0, "registros": 0}
+        setores_contagem[setor]["pecas"] += (r.qtd_pecas or 0.0)
+        setores_contagem[setor]["peso_kg"] = round(setores_contagem[setor]["peso_kg"] + (r.peso_kg or 0.0), 2)
+        setores_contagem[setor]["registros"] += 1
+
+    setores_ranking = [
+        {
+            "setor": setor,
+            "pecas": int(dados["pecas"]) if dados["pecas"].is_integer() else round(dados["pecas"], 1),
+            "peso_kg": dados["peso_kg"],
+            "registros": dados["registros"]
+        }
+        for setor, dados in sorted(setores_contagem.items(), key=lambda x: (x[1]["pecas"], x[1]["registros"]), reverse=True)
+    ]
+
+    # 6. Distribuição por Turno
+    turnos_contagem = {}
+    for r in registros:
+        t = r.turno.strip() if r.turno else "Matutino"
+        turnos_contagem[t] = turnos_contagem.get(t, 0) + 1
+
+    # 7. Balanço de Peso / Fluxo
+    peso_sujo_kg = round(sum(r.peso_kg or 0.0 for r in registros if "sujo" in (r.tipo_registro or "").lower()), 2)
+    pecas_limpas_recebidas = sum(r.qtd_pecas or 0.0 for r in registros if any(k in (r.tipo_registro or "").lower() for k in ["limpo", "estoque"]))
+    pecas_entregues_setores = sum(r.qtd_pecas or 0.0 for r in registros if "entrega" in (r.tipo_registro or "").lower())
+    pecas_devolucoes = sum(r.qtd_pecas or 0.0 for r in registros if "devolu" in (r.tipo_registro or "").lower())
+
+    return {
+        "meses_disponiveis": meses_disponiveis,
+        "mes_selecionado": mes_ano,
+        "total_registros": total_registros,
+        "total_pecas": int(total_pecas) if total_pecas.is_integer() else round(total_pecas, 1),
+        "total_peso_kg": total_peso_kg,
+        "total_hampers": int(total_hampers) if total_hampers.is_integer() else round(total_hampers, 1),
+        "tipos_movimentacao": tipos_mov,
+        "itens_ranking": itens_ranking,
+        "setores_ranking": setores_ranking,
+        "turnos": turnos_contagem,
+        "balanco": {
+            "peso_sujo_kg": peso_sujo_kg,
+            "pecas_limpas_recebidas": int(pecas_limpas_recebidas) if pecas_limpas_recebidas.is_integer() else round(pecas_limpas_recebidas, 1),
+            "pecas_entregues_setores": int(pecas_entregues_setores) if pecas_entregues_setores.is_integer() else round(pecas_entregues_setores, 1),
+            "pecas_devolucoes": int(pecas_devolucoes) if pecas_devolucoes.is_integer() else round(pecas_devolucoes, 1)
+        }
+    }
+
+# ==============================================================================
 # 5.1 DOCUMENTOS OFICIAIS DE ROUPARIA (RELATÓRIO DIÁRIO, ENXOVAL ENTREGUE, PESO SUJO)
 # ==============================================================================
 @app.get("/api/relatorios/rouparia/documentos")
@@ -1957,6 +2063,9 @@ def painel_principal():
                         <button onclick="alternarSubRelatorio('manutencao')" id="btnSubRelManut" class="px-3.5 py-2 text-xs font-bold rounded-xl bg-blue-900 text-white shadow-sm transition flex items-center gap-1.5">
                             <span>📈</span> Indicadores de Manutenção
                         </button>
+                        <button onclick="alternarSubRelatorio('rouparia_graficos')" id="btnSubRelRoupaGraficos" class="px-3.5 py-2 text-xs font-bold rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 transition flex items-center gap-1.5">
+                            <span>📊</span> Gráficos da Rouparia
+                        </button>
                         <button onclick="alternarSubRelatorio('rouparia_diario')" id="btnSubRelDiario" class="px-3.5 py-2 text-xs font-bold rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 transition flex items-center gap-1.5">
                             <span>📋</span> Relatório Diário de Rouparia
                         </button>
@@ -2100,6 +2209,197 @@ def painel_principal():
                             <table id="tabelaMatrizCruzada" class="w-full text-xs text-left border-collapse">
                                 <!-- Gerado dinamicamente -->
                             </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SUB-VISÃO: GRÁFICOS & INDICADORES DE ROUPARIA -->
+                <div id="subview-rel-roupa-graficos" class="space-y-6 hidden">
+                    <!-- Resumo Executivo / KPIs em Cards -->
+                    <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                        <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between">
+                            <div class="flex items-center justify-between">
+                                <span class="text-[11px] font-black uppercase text-slate-500 tracking-wider">Total de Peças</span>
+                                <span class="w-8 h-8 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center font-black text-sm">📦</span>
+                            </div>
+                            <div class="mt-2">
+                                <span id="kpiRoupaTotalPecas" class="text-2xl font-black text-slate-900">0</span>
+                                <span class="block text-[10px] text-slate-500 font-bold mt-0.5">unidades movimentadas</span>
+                            </div>
+                        </div>
+
+                        <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between">
+                            <div class="flex items-center justify-between">
+                                <span class="text-[11px] font-black uppercase text-slate-500 tracking-wider">Peso Sujo (KG)</span>
+                                <span class="w-8 h-8 rounded-xl bg-amber-50 text-amber-700 flex items-center justify-center font-black text-sm">⚖️</span>
+                            </div>
+                            <div class="mt-2">
+                                <span id="kpiRoupaTotalPesoKg" class="text-2xl font-black text-amber-600">0.00</span>
+                                <span class="block text-[10px] text-slate-500 font-bold mt-0.5">kg recolhidos</span>
+                            </div>
+                        </div>
+
+                        <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between">
+                            <div class="flex items-center justify-between">
+                                <span class="text-[11px] font-black uppercase text-slate-500 tracking-wider">Entregas Setores</span>
+                                <span class="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center font-black text-sm">🚚</span>
+                            </div>
+                            <div class="mt-2">
+                                <span id="kpiRoupaPecasEntregues" class="text-2xl font-black text-emerald-700">0</span>
+                                <span class="block text-[10px] text-slate-500 font-bold mt-0.5">peças distribuídas</span>
+                            </div>
+                        </div>
+
+                        <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between">
+                            <div class="flex items-center justify-between">
+                                <span class="text-[11px] font-black uppercase text-slate-500 tracking-wider">Registros / Lançamentos</span>
+                                <span class="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center font-black text-sm">📑</span>
+                            </div>
+                            <div class="mt-2">
+                                <span id="kpiRoupaTotalRegistros" class="text-2xl font-black text-indigo-900">0</span>
+                                <span class="block text-[10px] text-slate-500 font-bold mt-0.5">ocorrências registradas</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- GRÁFICO ESTENDIDO: TOP ITENS DE ENXOVAL MOVIMENTADOS (ESTILO EXTENDED, CORES INDIVIDUAIS E RÓTULOS DE DADOS) -->
+                    <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                        <div class="flex flex-wrap justify-between items-center gap-2 border-b border-slate-100 pb-3">
+                            <div class="flex items-center gap-2">
+                                <span class="text-lg">🛏️</span>
+                                <div>
+                                    <h3 class="text-sm font-extrabold text-slate-800 uppercase tracking-wider">Top Itens de Enxoval Movimentados</h3>
+                                    <p class="text-xs text-slate-500">Volume acumulado de peças por item de rouparia hospitalar</p>
+                                </div>
+                            </div>
+                            <span id="badgeTotalItensRoupa" class="px-3 py-1 bg-blue-50 text-blue-800 text-xs font-black rounded-lg border border-blue-200">
+                                0 Itens • 0 Peças
+                            </span>
+                        </div>
+
+                        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                            <!-- Coluna do Gráfico em Barra Estendido -->
+                            <div class="lg:col-span-8 bg-slate-50/50 p-4 rounded-2xl border border-slate-100">
+                                <div class="w-full relative" style="height: 380px;">
+                                    <canvas id="chartRoupaItens"></canvas>
+                                </div>
+                            </div>
+                            <!-- Coluna da Tabela Detalhada com Amostra de Cores -->
+                            <div class="lg:col-span-4 overflow-hidden border border-slate-200 rounded-xl bg-white shadow-xs">
+                                <div class="max-h-[380px] overflow-y-auto">
+                                    <table class="w-full text-xs text-left border-collapse">
+                                        <thead class="bg-slate-50 text-slate-500 uppercase text-[10px] font-black sticky top-0 border-b border-slate-200 z-10">
+                                            <tr>
+                                                <th class="p-2.5 w-8 text-center">Cor</th>
+                                                <th class="p-2.5">Item de Enxoval</th>
+                                                <th class="p-2.5 text-right">Peças</th>
+                                                <th class="p-2.5 text-right">%</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="tabelaRelatorioRoupaItens" class="divide-y divide-slate-100">
+                                            <!-- Preenchido dinamicamente -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- LINHA 2: DOIS GRÁFICOS (TIPOS DE MOVIMENTAÇÃO & DISTRIBUIÇÃO POR TURNO) -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <!-- Gráfico 1: Movimentação por Tipo de Registro -->
+                        <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                            <div class="flex justify-between items-center border-b border-slate-100 pb-3">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-base">🔄</span>
+                                    <h3 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider">Movimentações por Tipo de Operação</h3>
+                                </div>
+                                <span class="text-[11px] text-slate-500 font-semibold">Peças / Lançamentos</span>
+                            </div>
+                            <div class="w-full relative" style="height: 260px;">
+                                <canvas id="chartRoupaTipos"></canvas>
+                            </div>
+                        </div>
+
+                        <!-- Gráfico 2: Distribuição por Turno Operacional -->
+                        <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                            <div class="flex justify-between items-center border-b border-slate-100 pb-3">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-base">⏰</span>
+                                    <h3 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider">Distribuição por Turno de Atendimento</h3>
+                                </div>
+                                <span class="text-[11px] text-slate-500 font-semibold">Proporção Operacional</span>
+                            </div>
+                            <div class="w-full relative" style="height: 260px;">
+                                <canvas id="chartRoupaTurnos"></canvas>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- LINHA 3: DEMANDA POR SETOR & BALANÇO DE FLUXO -->
+                    <div class="grid grid-cols-1 md:grid-cols-12 gap-6">
+                        <!-- Demanda por Setor (Horizontal Bar) -->
+                        <div class="md:col-span-7 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                            <div class="flex justify-between items-center border-b border-slate-100 pb-3">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-base">🏥</span>
+                                    <h3 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider">Demanda de Enxoval por Setor / Área</h3>
+                                </div>
+                                <span class="text-[11px] text-slate-500 font-semibold">Top Setores Atendidos</span>
+                            </div>
+                            <div class="w-full relative" style="height: 300px;">
+                                <canvas id="chartRoupaSetores"></canvas>
+                            </div>
+                        </div>
+
+                        <!-- Balanço e Indicadores de Fluxo de Rouparia -->
+                        <div class="md:col-span-5 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4 flex flex-col justify-between">
+                            <div>
+                                <div class="flex justify-between items-center border-b border-slate-100 pb-3">
+                                    <div class="flex items-center gap-2">
+                                        <span class="text-base">⚖️</span>
+                                        <h3 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider">Balanço Operacional do Enxoval</h3>
+                                    </div>
+                                    <span class="text-[11px] text-emerald-700 font-bold">Controle Limpo / Sujo</span>
+                                </div>
+                                <div class="mt-4 space-y-3">
+                                    <div class="p-3 bg-blue-50/60 rounded-xl border border-blue-100 flex items-center justify-between">
+                                        <div>
+                                            <span class="block text-[11px] font-bold text-blue-900 uppercase">Peças Limpas Recebidas</span>
+                                            <span class="text-[10px] text-slate-500">Da Lavanderia Externa / Estoque</span>
+                                        </div>
+                                        <span id="balancoLimpoRecebido" class="text-lg font-black text-blue-900">0 un</span>
+                                    </div>
+
+                                    <div class="p-3 bg-emerald-50/60 rounded-xl border border-emerald-100 flex items-center justify-between">
+                                        <div>
+                                            <span class="block text-[11px] font-bold text-emerald-900 uppercase">Peças Entregues às Clínicas</span>
+                                            <span class="text-[10px] text-slate-500">Distribuição para leitos e setores</span>
+                                        </div>
+                                        <span id="balancoEntregueSetores" class="text-lg font-black text-emerald-800">0 un</span>
+                                    </div>
+
+                                    <div class="p-3 bg-amber-50/60 rounded-xl border border-amber-100 flex items-center justify-between">
+                                        <div>
+                                            <span class="block text-[11px] font-bold text-amber-900 uppercase">Enxoval Sujo Recolhido</span>
+                                            <span class="text-[10px] text-slate-500">Encaminhado para higienização</span>
+                                        </div>
+                                        <span id="balancoSujoKg" class="text-lg font-black text-amber-700">0.00 kg</span>
+                                    </div>
+
+                                    <div class="p-3 bg-rose-50/60 rounded-xl border border-rose-100 flex items-center justify-between">
+                                        <div>
+                                            <span class="block text-[11px] font-bold text-rose-900 uppercase">Devoluções / Inconformidades</span>
+                                            <span class="text-[10px] text-slate-500">Itens danificados, rasgados ou manchados</span>
+                                        </div>
+                                        <span id="balancoDevolucoes" class="text-lg font-black text-rose-700">0 un</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="pt-3 border-t border-slate-100 text-[11px] text-slate-500 flex justify-between items-center">
+                                <span>Unidade: <strong class="text-slate-700">PS Anil (SEMUS)</strong></span>
+                                <span class="text-slate-400">Atualização em Tempo Real</span>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -3090,6 +3390,49 @@ def painel_principal():
             let debounceTimer = null;
             let chartStatusInstance = null;
             let chartCategoriaInstance = null;
+            let chartRoupaItensInstance = null;
+            let chartRoupaTiposInstance = null;
+            let chartRoupaTurnosInstance = null;
+            let chartRoupaSetoresInstance = null;
+
+            // Paleta global rica de cores modernas e distintas
+            const PALETA_CORES = [
+                '#2563eb', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444', 
+                '#06b6d4', '#ec4899', '#f97316', '#14b8a6', '#6366f1', 
+                '#84cc16', '#a855f7', '#e11d48', '#0284c7', '#d97706', 
+                '#059669', '#7c3aed', '#dc2626', '#475569', '#0d9488',
+                '#3b82f6', '#16a34a', '#eab308', '#9333ea', '#ea580c'
+            ];
+
+            // Plugin customizado para desenhar os Rótulos de Dados numéricos (compatível com vertical e horizontal)
+            const pluginRotulosDados = {
+                id: 'customDataLabels',
+                afterDatasetsDraw(chart) {
+                    const { ctx } = chart;
+                    const isHorizontal = chart.config.options && chart.config.options.indexAxis === 'y';
+                    chart.data.datasets.forEach((dataset, datasetIndex) => {
+                        const meta = chart.getDatasetMeta(datasetIndex);
+                        meta.data.forEach((bar, index) => {
+                            const value = dataset.data[index];
+                            if (value !== undefined && value !== null && value > 0) {
+                                ctx.save();
+                                ctx.font = 'bold 11px "Plus Jakarta Sans", sans-serif';
+                                ctx.fillStyle = '#0f172a';
+                                if (isHorizontal) {
+                                    ctx.textAlign = 'left';
+                                    ctx.textBaseline = 'middle';
+                                    ctx.fillText(Number(value).toLocaleString('pt-BR'), bar.x + 5, bar.y);
+                                } else {
+                                    ctx.textAlign = 'center';
+                                    ctx.textBaseline = 'bottom';
+                                    ctx.fillText(Number(value).toLocaleString('pt-BR'), bar.x, bar.y - 4);
+                                }
+                                ctx.restore();
+                            }
+                        });
+                    });
+                }
+            };
 
             // Funções de formatação e preenchimento de Data e Horário
             function formatarDataIsoHoje() {
@@ -3167,7 +3510,9 @@ def painel_principal():
 
                 if (abaId === 'consolidado') carregarConsolidado();
                 if (abaId === 'relatorios') {
-                    if (typeof subAbaRelatorioAtiva !== 'undefined' && subAbaRelatorioAtiva !== 'manutencao') {
+                    if (typeof subAbaRelatorioAtiva !== 'undefined' && subAbaRelatorioAtiva === 'rouparia_graficos') {
+                        carregarGraficosRouparia();
+                    } else if (typeof subAbaRelatorioAtiva !== 'undefined' && subAbaRelatorioAtiva !== 'manutencao') {
                         carregarDocumentosRouparia();
                     } else {
                         carregarRelatorios();
@@ -3456,6 +3801,10 @@ def painel_principal():
 
             // Carregar Relatórios & Gráficos (Imagem 4)
             async function carregarRelatorios() {
+                if (typeof subAbaRelatorioAtiva !== 'undefined' && subAbaRelatorioAtiva === 'rouparia_graficos') {
+                    carregarGraficosRouparia();
+                    return;
+                }
                 const mes = document.getElementById('relatorioFiltroMes').value;
                 try {
                     const res = await fetch(`/api/relatorios/manutencao?mes_ano=${encodeURIComponent(mes)}`);
@@ -3508,15 +3857,6 @@ def painel_principal():
                     const catData = Object.values(d.categorias);
                     const totalCatQtd = catData.reduce((acc, v) => acc + (parseFloat(v) || 0), 0);
 
-                    // Paleta rica de cores modernas e distintas para cada categoria
-                    const PALETA_CORES = [
-                        '#2563eb', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444', 
-                        '#06b6d4', '#ec4899', '#f97316', '#14b8a6', '#6366f1', 
-                        '#84cc16', '#a855f7', '#e11d48', '#0284c7', '#d97706', 
-                        '#059669', '#7c3aed', '#dc2626', '#475569', '#0d9488',
-                        '#3b82f6', '#16a34a', '#eab308', '#9333ea', '#ea580c'
-                    ];
-
                     const bgColors = catLabels.map((_, i) => PALETA_CORES[i % PALETA_CORES.length]);
 
                     // Preencher badge do total
@@ -3542,29 +3882,6 @@ def painel_principal():
                             </tr>
                         `;
                     });
-
-                    // Plugin customizado para desenhar os Rótulos de Dados numéricos no topo de cada barra
-                    const pluginRotulosDados = {
-                        id: 'customDataLabels',
-                        afterDatasetsDraw(chart) {
-                            const { ctx } = chart;
-                            chart.data.datasets.forEach((dataset, datasetIndex) => {
-                                const meta = chart.getDatasetMeta(datasetIndex);
-                                meta.data.forEach((bar, index) => {
-                                    const value = dataset.data[index];
-                                    if (value !== undefined && value !== null && value > 0) {
-                                        ctx.save();
-                                        ctx.font = 'bold 12px "Plus Jakarta Sans", sans-serif';
-                                        ctx.fillStyle = '#0f172a';
-                                        ctx.textAlign = 'center';
-                                        ctx.textBaseline = 'bottom';
-                                        ctx.fillText(value, bar.x, bar.y - 6);
-                                        ctx.restore();
-                                    }
-                                });
-                            });
-                        }
-                    };
 
                     if (chartCategoriaInstance) chartCategoriaInstance.destroy();
                     const ctxCat = document.getElementById('chartCategoria').getContext('2d');
@@ -3703,15 +4020,17 @@ def painel_principal():
 
             function alternarSubRelatorio(sub) {
                 subAbaRelatorioAtiva = sub;
-                const subs = ['manutencao', 'rouparia_diario', 'rouparia_enxoval', 'rouparia_peso'];
+                const subs = ['manutencao', 'rouparia_graficos', 'rouparia_diario', 'rouparia_enxoval', 'rouparia_peso'];
                 const btns = {
                     'manutencao': document.getElementById('btnSubRelManut'),
+                    'rouparia_graficos': document.getElementById('btnSubRelRoupaGraficos'),
                     'rouparia_diario': document.getElementById('btnSubRelDiario'),
                     'rouparia_enxoval': document.getElementById('btnSubRelEnxoval'),
                     'rouparia_peso': document.getElementById('btnSubRelPeso')
                 };
                 const views = {
                     'manutencao': document.getElementById('subview-rel-manut'),
+                    'rouparia_graficos': document.getElementById('subview-rel-roupa-graficos'),
                     'rouparia_diario': document.getElementById('subview-rel-diario'),
                     'rouparia_enxoval': document.getElementById('subview-rel-enxoval'),
                     'rouparia_peso': document.getElementById('subview-rel-peso')
@@ -3733,10 +4052,283 @@ def painel_principal():
                     if (wMes) wMes.classList.remove('hidden');
                     if (wData) wData.classList.add('hidden');
                     carregarRelatorios();
+                } else if (sub === 'rouparia_graficos') {
+                    if (wMes) wMes.classList.remove('hidden');
+                    if (wData) wData.classList.add('hidden');
+                    carregarGraficosRouparia();
                 } else {
                     if (wMes) wMes.classList.add('hidden');
                     if (wData) wData.classList.remove('hidden');
                     carregarDocumentosRouparia();
+                }
+            }
+
+            // Carregar Gráficos e Indicadores de Rouparia
+            async function carregarGraficosRouparia() {
+                const mes = document.getElementById('relatorioFiltroMes') ? document.getElementById('relatorioFiltroMes').value : 'Todos';
+                try {
+                    const res = await fetch(`/api/relatorios/rouparia/graficos?mes_ano=${encodeURIComponent(mes)}`);
+                    const d = await res.json();
+
+                    // Garantir que as opções de meses estejam sincronizadas
+                    const selRel = document.getElementById('relatorioFiltroMes');
+                    if (selRel && d.meses_disponiveis && selRel.options.length <= 1) {
+                        d.meses_disponiveis.forEach(m => {
+                            const opt = document.createElement('option');
+                            opt.value = m;
+                            opt.textContent = m;
+                            selRel.appendChild(opt);
+                        });
+                        if (d.mes_selecionado) selRel.value = d.mes_selecionado;
+                    }
+
+                    // 1. Atualizar KPIs
+                    if (document.getElementById('kpiRoupaTotalPecas')) {
+                        document.getElementById('kpiRoupaTotalPecas').textContent = Number(d.total_pecas || 0).toLocaleString('pt-BR');
+                    }
+                    if (document.getElementById('kpiRoupaTotalPesoKg')) {
+                        document.getElementById('kpiRoupaTotalPesoKg').textContent = Number(d.total_peso_kg || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' kg';
+                    }
+                    if (document.getElementById('kpiRoupaPecasEntregues')) {
+                        document.getElementById('kpiRoupaPecasEntregues').textContent = Number((d.balanco && d.balanco.pecas_entregues_setores) || 0).toLocaleString('pt-BR');
+                    }
+                    if (document.getElementById('kpiRoupaTotalRegistros')) {
+                        document.getElementById('kpiRoupaTotalRegistros').textContent = Number(d.total_registros || 0).toLocaleString('pt-BR');
+                    }
+
+                    // Balanço Operacional
+                    if (document.getElementById('balancoLimpoRecebido')) {
+                        document.getElementById('balancoLimpoRecebido').textContent = Number((d.balanco && d.balanco.pecas_limpas_recebidas) || 0).toLocaleString('pt-BR') + ' un';
+                    }
+                    if (document.getElementById('balancoEntregueSetores')) {
+                        document.getElementById('balancoEntregueSetores').textContent = Number((d.balanco && d.balanco.pecas_entregues_setores) || 0).toLocaleString('pt-BR') + ' un';
+                    }
+                    if (document.getElementById('balancoSujoKg')) {
+                        document.getElementById('balancoSujoKg').textContent = Number((d.balanco && d.balanco.peso_sujo_kg) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' kg';
+                    }
+                    if (document.getElementById('balancoDevolucoes')) {
+                        document.getElementById('balancoDevolucoes').textContent = Number((d.balanco && d.balanco.pecas_devolucoes) || 0).toLocaleString('pt-BR') + ' un';
+                    }
+
+                    // 2. Gráfico e Tabela de Top Itens de Enxoval (Estilo Extendido, com Cores Individuais e Rótulos)
+                    const itens = d.itens_ranking || [];
+                    const itemLabels = itens.map(i => i.item);
+                    const itemData = itens.map(i => i.pecas);
+                    const totalPecasItens = itemData.reduce((acc, v) => acc + (parseFloat(v) || 0), 0);
+                    const bgColorsItens = itemLabels.map((_, i) => PALETA_CORES[i % PALETA_CORES.length]);
+
+                    const badgeItens = document.getElementById('badgeTotalItensRoupa');
+                    if (badgeItens) {
+                        badgeItens.textContent = `${itemLabels.length} Itens • ${Number(totalPecasItens).toLocaleString('pt-BR')} Peças`;
+                    }
+
+                    const tbItens = document.getElementById('tabelaRelatorioRoupaItens');
+                    if (tbItens) {
+                        tbItens.innerHTML = '';
+                        itens.forEach((it, idx) => {
+                            const cor = bgColorsItens[idx];
+                            const pct = totalPecasItens > 0 ? ((it.pecas / totalPecasItens) * 100).toFixed(1) : '0.0';
+                            tbItens.innerHTML += `
+                                <tr class="hover:bg-slate-50 transition">
+                                    <td class="p-2.5 text-center">
+                                        <span class="inline-block w-4 h-4 rounded-md shadow-xs border border-white" style="background-color: ${cor}"></span>
+                                    </td>
+                                    <td class="p-2.5 font-bold text-slate-800">${it.item}</td>
+                                    <td class="p-2.5 text-right font-black text-slate-900 text-sm">${Number(it.pecas).toLocaleString('pt-BR')}</td>
+                                    <td class="p-2.5 text-right font-bold text-blue-700">${pct}%</td>
+                                </tr>
+                            `;
+                        });
+                    }
+
+                    if (chartRoupaItensInstance) chartRoupaItensInstance.destroy();
+                    const ctxItens = document.getElementById('chartRoupaItens');
+                    if (ctxItens) {
+                        chartRoupaItensInstance = new Chart(ctxItens.getContext('2d'), {
+                            type: 'bar',
+                            data: {
+                                labels: itemLabels,
+                                datasets: [{
+                                    label: 'Quantidade de Peças',
+                                    data: itemData,
+                                    backgroundColor: bgColorsItens,
+                                    borderRadius: 6,
+                                    borderSkipped: false
+                                }]
+                            },
+                            options: {
+                                responsive: true,
+                                maintainAspectRatio: false,
+                                layout: { padding: { top: 25, bottom: 10 } },
+                                plugins: {
+                                    legend: { display: false },
+                                    tooltip: {
+                                        callbacks: {
+                                            label: function(context) {
+                                                const val = context.raw || 0;
+                                                const pct = totalPecasItens > 0 ? ((val / totalPecasItens) * 100).toFixed(1) : 0;
+                                                return `Peças: ${Number(val).toLocaleString('pt-BR')} (${pct}%)`;
+                                            }
+                                        }
+                                    }
+                                },
+                                scales: {
+                                    y: {
+                                        beginAtZero: true,
+                                        grid: { color: '#f1f5f9' },
+                                        ticks: {
+                                            font: { size: 10, weight: 'bold' },
+                                            color: '#64748b',
+                                            callback: val => Number(val).toLocaleString('pt-BR')
+                                        }
+                                    },
+                                    x: {
+                                        grid: { display: false },
+                                        ticks: {
+                                            font: { size: 10, weight: 'bold' },
+                                            color: '#334155',
+                                            maxRotation: 45,
+                                            minRotation: 25,
+                                            autoSkip: false
+                                        }
+                                    }
+                                }
+                            },
+                            plugins: [pluginRotulosDados]
+                        });
+                    }
+
+                    // 3. Gráfico de Movimentações por Tipo de Operação
+                    const tipos = d.tipos_movimentacao || {};
+                    const tipoLabels = Object.keys(tipos);
+                    const tipoDataPecas = tipoLabels.map(t => tipos[t].pecas || 0);
+                    const bgColorsTipos = tipoLabels.map((_, i) => PALETA_CORES[(i + 4) % PALETA_CORES.length]);
+
+                    if (chartRoupaTiposInstance) chartRoupaTiposInstance.destroy();
+                    const ctxTipos = document.getElementById('chartRoupaTipos');
+                    if (ctxTipos) {
+                        chartRoupaTiposInstance = new Chart(ctxTipos.getContext('2d'), {
+                            type: 'bar',
+                            data: {
+                                labels: tipoLabels,
+                                datasets: [{
+                                    label: 'Peças Movimentadas',
+                                    data: tipoDataPecas,
+                                    backgroundColor: bgColorsTipos,
+                                    borderRadius: 6
+                                }]
+                            },
+                            options: {
+                                responsive: true,
+                                maintainAspectRatio: false,
+                                layout: { padding: { top: 20 } },
+                                plugins: {
+                                    legend: { display: false },
+                                    tooltip: {
+                                        callbacks: {
+                                            afterLabel: function(ctx) {
+                                                const t = tipoLabels[ctx.dataIndex];
+                                                const reg = tipos[t] ? tipos[t].registros : 0;
+                                                const kg = tipos[t] ? tipos[t].peso_kg : 0;
+                                                return `Lançamentos: ${reg} | Peso: ${kg} kg`;
+                                            }
+                                        }
+                                    }
+                                },
+                                scales: {
+                                    y: {
+                                        beginAtZero: true,
+                                        grid: { color: '#f1f5f9' },
+                                        ticks: { font: { size: 10 }, color: '#64748b' }
+                                    },
+                                    x: {
+                                        grid: { display: false },
+                                        ticks: { font: { size: 10, weight: 'bold' }, color: '#334155' }
+                                    }
+                                }
+                            },
+                            plugins: [pluginRotulosDados]
+                        });
+                    }
+
+                    // 4. Gráfico de Distribuição por Turno Operacional
+                    const turnos = d.turnos || {};
+                    const turnoLabels = Object.keys(turnos);
+                    const turnoData = Object.values(turnos);
+                    if (chartRoupaTurnosInstance) chartRoupaTurnosInstance.destroy();
+                    const ctxTurnos = document.getElementById('chartRoupaTurnos');
+                    if (ctxTurnos) {
+                        chartRoupaTurnosInstance = new Chart(ctxTurnos.getContext('2d'), {
+                            type: 'doughnut',
+                            data: {
+                                labels: turnoLabels,
+                                datasets: [{
+                                    data: turnoData,
+                                    backgroundColor: ['#3b82f6', '#f59e0b', '#10b981', '#6366f1']
+                                }]
+                            },
+                            options: {
+                                responsive: true,
+                                maintainAspectRatio: false,
+                                plugins: {
+                                    legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11, weight: 'bold' } } }
+                                }
+                            }
+                        });
+                    }
+
+                    // 5. Gráfico de Demanda por Setores (Horizontal Bar)
+                    const setores = (d.setores_ranking || []).slice(0, 10);
+                    const setorLabels = setores.map(s => s.setor);
+                    const setorData = setores.map(s => s.pecas);
+                    const bgColorsSetores = setorLabels.map((_, i) => PALETA_CORES[(i + 8) % PALETA_CORES.length]);
+
+                    if (chartRoupaSetoresInstance) chartRoupaSetoresInstance.destroy();
+                    const ctxSetores = document.getElementById('chartRoupaSetores');
+                    if (ctxSetores) {
+                        chartRoupaSetoresInstance = new Chart(ctxSetores.getContext('2d'), {
+                            type: 'bar',
+                            data: {
+                                labels: setorLabels,
+                                datasets: [{
+                                    label: 'Peças',
+                                    data: setorData,
+                                    backgroundColor: bgColorsSetores,
+                                    borderRadius: 6
+                                }]
+                            },
+                            options: {
+                                indexAxis: 'y',
+                                responsive: true,
+                                maintainAspectRatio: false,
+                                layout: { padding: { right: 35 } },
+                                plugins: {
+                                    legend: { display: false },
+                                    tooltip: {
+                                        callbacks: {
+                                            label: ctx => `Peças: ${Number(ctx.raw || 0).toLocaleString('pt-BR')}`
+                                        }
+                                    }
+                                },
+                                scales: {
+                                    x: {
+                                        beginAtZero: true,
+                                        grid: { color: '#f1f5f9' },
+                                        ticks: { font: { size: 10 }, color: '#64748b' }
+                                    },
+                                    y: {
+                                        grid: { display: false },
+                                        ticks: { font: { size: 10, weight: 'bold' }, color: '#334155' }
+                                    }
+                                }
+                            },
+                            plugins: [pluginRotulosDados]
+                        });
+                    }
+
+                } catch (err) {
+                    console.error("Erro ao carregar gráficos de rouparia:", err);
+                    mostrarToast("Erro ao carregar gráficos de rouparia", "erro");
                 }
             }
 
@@ -4067,6 +4659,25 @@ def painel_principal():
                             ${el.innerHTML}
                         `;
                         imprimirDocumentoHtml(html, 'Relatorio-Manutencoes-PS-ANIL');
+                    }
+                } else if (subAbaRelatorioAtiva === 'rouparia_graficos') {
+                    const el = document.getElementById('subview-rel-roupa-graficos');
+                    if (el) {
+                        const html = `
+                            <div class="border-b-2 border-slate-900 pb-3 mb-4 flex justify-between items-center">
+                                <div>
+                                    <span class="text-xs font-black uppercase text-blue-900 block">Prefeitura Municipal de São Luís • SEMUS</span>
+                                    <h1 class="text-lg font-black uppercase">Relatório e Gráficos de Rouparia Hospitalar</h1>
+                                    <p class="text-xs text-slate-500">Pronto Socorro do Anil (PS Anil) • Gestão Operacional de Enxoval</p>
+                                </div>
+                                <div class="text-right text-xs">
+                                    <span class="font-bold">Mês de Referência: ${document.getElementById('relatorioFiltroMes').value}</span><br>
+                                    <span class="text-slate-400">Gerado em: ${new Date().toLocaleDateString('pt-BR')} às ${obterHoraAtual()}</span>
+                                </div>
+                            </div>
+                            ${el.innerHTML}
+                        `;
+                        imprimirDocumentoHtml(html, 'Relatorio-Graficos-Rouparia-PS-ANIL');
                     }
                 } else if (subAbaRelatorioAtiva === 'rouparia_diario') {
                     const el = document.getElementById('printableRelatorioDiario');
